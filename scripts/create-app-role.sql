@@ -36,12 +36,16 @@
 \set ON_ERROR_STOP on
 
 -- A senha vem do ambiente. Nunca de literal neste arquivo.
+-- O \set antes do \getenv garante que a variavel exista mesmo quando a variavel
+-- de ambiente nao foi definida (sem isso, :'app_password' seria interpolado
+-- literalmente e viraria erro de sintaxe em vez de mensagem clara).
+\set app_password ''
 \getenv app_password APP_PG_PASSWORD
 
 SELECT coalesce(:'app_password', '') <> '' AS tem_senha \gset
 \if :tem_senha
 \else
-\warning 'ERRO: defina APP_PG_PASSWORD antes de executar (ver cabecalho do script).'
+\warn 'ERRO: defina APP_PG_PASSWORD antes de executar (ver cabecalho do script).'
 \quit
 \endif
 
