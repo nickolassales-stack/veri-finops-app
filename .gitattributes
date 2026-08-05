@@ -1,0 +1,13 @@
+# Normaliza fim de linha: scripts executados na EC2 (Linux) nunca podem ir com CRLF.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.sql  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Binarios
+*.png  binary
+*.jpg  binary
+*.docx binary
+*.pdf  binary

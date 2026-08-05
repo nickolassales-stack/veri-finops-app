@@ -1,0 +1,50 @@
+# ---- Segredos: NUNCA versionar ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ---- Testes / coverage ----
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# ---- Python (ETL) ----
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+
+# ---- Snapshots de inspecao (podem conter dados de custo) ----
+# O snapshot revisado e versionado manualmente em docs/schema-snapshot.md
+scripts/out/
+
+# ---- SO / editores ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ---- Temporarios do Office ----
+~$*.docx
+~$*.xlsx
