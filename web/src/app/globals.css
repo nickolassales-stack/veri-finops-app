@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Design tokens VERI -- Brandbook v2.0 (docs/skill-veri.md)
+
+   Regra do brandbook: "Usar cores fora da paleta oficial" e proibido. Todas as
+   cores da aplicacao -- inclusive as de grafico e de status -- saem desta lista.
+   Nao adicione HEX novo aqui sem aprovacao de branding.
+
+   Tema: apenas claro. O brandbook nao define paleta para tema escuro, e criar
+   uma seria inventar identidade visual. Por isso o dark mode automatico do
+   scaffold foi removido de proposito.
+   ========================================================================== */
+
+@theme {
+  /* --- Principal --- */
+  --color-veri-verde: #7f9c90; /* Pantone 5565 C -- cor dominante da marca */
+
+  /* --- Secundarias --- */
+  --color-veri-rosa: #ea9e95; /* Pantone 4066 C -- lacos afetivos */
+  --color-veri-branco: #ffffff;
+  --color-veri-amarelo: #efc06e; /* Pantone 2008 C -- conquistas */
+
+  /* --- Terciarias --- */
+  --color-veri-verde-claro: #92aca0; /* Pantone 5575 C */
+  --color-veri-verde-escuro: #384e46; /* Pantone 4202 C -- cor do logotipo */
+  --color-veri-vinho: #862041; /* Pantone 208 C */
+  --color-veri-offwhite: #f2f4f0; /* Pantone 7509 C */
+  --color-veri-mostarda: #d6a461;
+
+  /* --- Papeis semanticos (apelidos, nao cores novas) --- */
+  --color-fundo: var(--color-veri-offwhite);
+  --color-superficie: var(--color-veri-branco);
+  --color-texto: var(--color-veri-verde-escuro);
+  --color-texto-suave: #5c7168; /* verde-escuro clareado -- unico tom derivado, para texto secundario legivel */
+  --color-borda: #dde3dd; /* off-white escurecido para separadores de 1px */
+  --color-acento: var(--color-veri-verde);
+
+  /* Status financeiro: verde = realizacao, amarelo = atencao, vinho = estouro.
+     Mapeamento vem do significado semantico definido no brandbook. */
+  --color-status-ok: var(--color-veri-verde);
+  --color-status-atencao: var(--color-veri-mostarda);
+  --color-status-critico: var(--color-veri-vinho);
+}
+
+@theme inline {
+  --font-display: var(--fonte-veri-display);
+  --font-sans: var(--fonte-veri-corpo);
+}
+
+:root {
+  /* PENDENCIA DE BRANDING: as fontes oficiais (Ador Hairline para titulos e
+     Mr Eaves San OT para corpo) sao licenciadas via Adobe Fonts e nao estao
+     disponiveis no repositorio. O brandbook proibe substituir fontes sem
+     aprovacao, portanto os nomes oficiais vem PRIMEIRO na pilha: quando o kit
+     da Adobe Fonts for adicionado ao <head>, a tipografia correta passa a
+     valer sem alterar mais nada. Ate lá, cai numa pilha neutra de sistema. */
+  --fonte-veri-display: "Ador Hairline", "Optima", "Candara", "Segoe UI", system-ui, sans-serif;
+  --fonte-veri-corpo: "Mr Eaves San OT", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background-color: var(--color-fundo);
+  color: var(--color-texto);
+  font-family: var(--fonte-veri-corpo);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Titulos usam a fonte display com o peso leve caracteristico da marca. */
+.veri-display {
+  font-family: var(--fonte-veri-display);
+  font-weight: 300;
+  letter-spacing: 0.01em;
+}
+
+/* Numeros financeiros alinhados em coluna (tabular) para leitura de tabela. */
+.veri-numero {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Foco visivel e dentro da paleta -- acessibilidade de teclado. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-veri-verde-escuro);
+  outline-offset: 2px;
+}
