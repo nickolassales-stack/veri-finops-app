@@ -81,10 +81,24 @@ conter dados de custo; revise antes de versionar qualquer trecho).
 
 ## 5. Usuário do banco para a aplicação
 
-> **Status: pendente.** O SQL definitivo só pode ser escrito depois da etapa 4,
-> porque depende das tabelas que realmente existem.
+Script: [`scripts/create-app-role.sql`](../scripts/create-app-role.sql), escrito
+sobre o schema real já inspecionado ([`schema-snapshot.md`](schema-snapshot.md)).
 
-Princípios já decididos:
+```bash
+# na EC2, a partir do repositório clonado
+openssl rand -base64 24                       # gere e guarde no .env do compose
+export APP_PG_PASSWORD='<a-senha-gerada>'
+docker exec -i -e APP_PG_PASSWORD="$APP_PG_PASSWORD" finops-postgres \
+  psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
+  < scripts/create-app-role.sql
+unset APP_PG_PASSWORD
+```
+
+É aditivo e idempotente (reexecutar serve para rotação de senha): cria o role,
+concede privilégios e imprime a verificação. Não cria, altera ou remove tabela,
+coluna, dado, view ou constraint, e não toca em `finops_user`/`metabase_user`.
+
+Princípios aplicados:
 
 - **Não reutilizar `finops_user`** (dono do schema, usado pelo ETL). O portal recebe
   um role próprio, `finops_app`, com permissão mínima.
