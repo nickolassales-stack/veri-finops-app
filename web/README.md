@@ -31,9 +31,21 @@ npm run dev                        # http://localhost:3000
 
 | Comando | O que faz |
 |---|---|
-| `npm run dev` | Servidor de desenvolvimento |
+| `npm run dev` | Servidor de desenvolvimento (lê `.env.local`) |
 | `npm run build` | Build de produção (não acessa o banco) |
+| `npm start` | Servidor de produção — o mesmo binário que roda no container |
 | `npm run lint` | ESLint |
+
+Duas particularidades de `output: standalone`, ambas já resolvidas nos scripts,
+mas que valem saber ao depurar:
+
+- **`npm start` não lê `.env.local`.** O servidor standalone recebe configuração
+  só do ambiente — igual ao container, onde as variáveis vêm do compose. Para
+  testar o build de produção localmente:
+  `set -a; . ./.env.local; set +a; npm start`
+- **`prestart` copia `public/` e `.next/static/` para `.next/standalone/`.** Sem
+  essa cópia o servidor sobe e responde 200, mas serve a página **sem CSS e sem
+  gráficos** — os assets ficam 404. O `Dockerfile` faz a mesma cópia.
 
 ## Organização
 
