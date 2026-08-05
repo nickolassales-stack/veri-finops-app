@@ -3,17 +3,20 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { navPrincipal } from "@/lib/nav";
+import type { ItemNav } from "@/lib/nav";
 
-export function MainNav() {
+export function MainNav({ itens }: { itens: ItemNav[] }) {
   const pathname = usePathname();
 
   return (
     <nav aria-label="Navegacao principal">
       <ul className="flex items-center gap-1">
-        {navPrincipal.map((item) => {
+        {itens.map((item) => {
+          // /dashboard nao deve ficar ativo quando se esta em /dashboard/analitico
           const ativo =
-            item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+            item.href === "/dashboard"
+              ? pathname === "/dashboard"
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
           return (
             <li key={item.href}>

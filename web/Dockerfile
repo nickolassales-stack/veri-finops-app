@@ -39,6 +39,15 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
+# Comando administrativo de criacao de usuario. Roda dentro do container, que ja
+# tem as variaveis PG_* no ambiente:
+#   docker exec -i -e ADMIN_EMAIL -e ADMIN_PASSWORD finops-portal \
+#     node scripts/create-admin.mjs
+# O caminho de src/ e preservado porque o script importa a implementacao unica
+# de hash por caminho relativo. `pg` resolve do node_modules do standalone.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+COPY --from=builder --chown=nextjs:nodejs /app/src/lib/auth/password.mjs ./src/lib/auth/password.mjs
+
 USER nextjs
 EXPOSE 3000
 

@@ -53,6 +53,10 @@ services:
       PG_STATEMENT_TIMEOUT_MS: ${APP_PG_STATEMENT_TIMEOUT_MS:-15000}
       APP_TZ: ${APP_TZ:-America/Sao_Paulo}
 
+      # Autenticacao. AUTH_COOKIE_SECURE deve permanecer true; ver .env.example.
+      AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-12}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+
     # Padrao seguro: acessivel apenas de dentro da EC2 (via tunel SSH para
     # validacao). Para liberar a usuarios de gestao, publique atras de
     # Nginx + HTTPS e restrinja o Security Group -- nao troque para 0.0.0.0

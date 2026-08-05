@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "lint": "eslint",
-    "prestart": "node -e \"const fs=require('fs');fs.cpSync('public','.next/standalone/public',{recursive:true});fs.cpSync('.next/static','.next/standalone/.next/static',{recursive:true});console.log('assets estaticos copiados para .next/standalone')\""
+    "prestart": "node -e \"const fs=require('fs');fs.cpSync('public','.next/standalone/public',{recursive:true});fs.cpSync('.next/static','.next/standalone/.next/static',{recursive:true});console.log('assets estaticos copiados para .next/standalone')\"",
+    "test": "vitest run",
+    "create-admin": "node scripts/create-admin.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

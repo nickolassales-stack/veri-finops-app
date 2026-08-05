@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
 
-import { SiteFooter } from "@/components/layout/site-footer";
-import { SiteHeader } from "@/components/layout/site-header";
-
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,14 +13,15 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+/**
+ * Layout raiz. Deliberadamente sem cabecalho e sem rodape: a tela de login nao
+ * tem navegacao, e o chrome da aplicacao vive no layout de `(privado)`, que
+ * exige sessao.
+ */
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="pt-BR" className="h-full antialiased">
-      <body className="flex min-h-full flex-col">
-        <SiteHeader />
-        <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-10">{children}</main>
-        <SiteFooter />
-      </body>
+      <body className="flex min-h-full flex-col">{children}</body>
     </html>
   );
 }

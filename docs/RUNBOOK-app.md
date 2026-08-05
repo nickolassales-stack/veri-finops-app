@@ -115,6 +115,59 @@ Princípios aplicados:
 
 ---
 
+## 5.1 Autenticação
+
+Detalhes de uso estão em [`../web/README.md`](../web/README.md#autenticação).
+Aqui fica o essencial de operação.
+
+**Modelo:** e-mail + senha, hash `scrypt` do `node:crypto`, sessão opaca
+persistida em `app_sessions` e cookie HTTP-only. Sem biblioteca de auth — a
+justificativa técnica está no commit de implementação. Sem cadastro público.
+
+**Tabelas** (criadas por [`../scripts/create-auth-tables.sql`](../scripts/create-auth-tables.sql),
+aditivo e idempotente):
+
+| Tabela | Papel |
+|---|---|
+| `app_users` | usuários, perfil (`ADMIN` \| `VIEWER`), hash da senha |
+| `app_sessions` | sessões ativas; guarda **só o SHA-256** do token, nunca o token |
+
+A separação de privilégio continua valendo: `finops_app` escreve nas tabelas
+`app_*` e nas 3 de governança, e segue **somente-leitura** nas tabelas de custo
+do ETL.
+
+**Criar ou redefinir um usuário** (a senha só existe no ambiente da execução):
+
+```bash
+read -rs ADMIN_PASSWORD && export ADMIN_PASSWORD
+docker exec -i -e ADMIN_EMAIL="nome@porveri.com.br" -e ADMIN_PASSWORD \
+  finops-portal node scripts/create-admin.mjs
+unset ADMIN_PASSWORD
+```
+
+Rodar de novo para o mesmo e-mail redefine a senha, o perfil, e **encerra as
+sessões abertas** daquele usuário. É também o procedimento de troca de senha:
+não há tela para isso.
+
+**Revogar acesso sem apagar histórico:**
+
+```sql
+UPDATE app_users SET active = false, updated_at = now() WHERE email = '...';
+DELETE FROM app_sessions WHERE user_id = (SELECT id FROM app_users WHERE email = '...');
+```
+
+O `active = false` já basta — `lerSessao()` exige `u.active` —, mas apagar as
+sessões encerra o acesso na hora em vez de na próxima requisição.
+
+**Pontos de atenção operacionais:**
+
+- `AUTH_COOKIE_SECURE` deve permanecer `true`. Funciona no acesso por túnel SSH
+  porque `localhost` é contexto seguro para o navegador. Mudar para `false`
+  faz a sessão trafegar em claro.
+- O bloqueio por tentativas é **em memória do processo**: reiniciar o container
+  zera a contagem, e com mais de uma réplica cada uma contaria em separado.
+- Sessões vencidas são limpas de forma oportunista a cada login, sem cron.
+
 ## 6. Deploy na EC2 FinOps
 
 Pré-requisitos: etapas 4 e 5 concluídas.

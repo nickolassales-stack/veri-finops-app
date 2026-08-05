@@ -1,5 +1,6 @@
 import { Aviso } from "@/components/ui/aviso";
 import { Card } from "@/components/ui/card";
+import { requirePapel } from "@/lib/auth/dal";
 import { checkDbHealth } from "@/lib/db";
 import { formatInteiro } from "@/lib/format";
 import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico";
@@ -7,6 +8,9 @@ import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico
 export const metadata = { title: "Diagnostico" };
 
 export default async function DiagnosticoPage() {
+  // Esta tela expoe estrutura do banco e privilegios: restrita a ADMIN.
+  await requirePapel("ADMIN", "/diagnostico");
+
   const db = await checkDbHealth();
 
   if (!db.ok) {
