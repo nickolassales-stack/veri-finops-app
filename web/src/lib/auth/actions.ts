@@ -4,15 +4,20 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { requireSessao } from "./dal";
 import { destinoInternoValido } from "./destino";
-import { verifyPassword } from "./password.mjs";
+import { hashPassword, verifyPassword } from "./password.mjs";
 import {
+  atualizarSenha,
+  buscarHashDeSenha,
   buscarUsuarioPorEmail,
   criarSessao,
+  destruirOutrasSessoes,
   destruirSessaoAtual,
   limparSessoesExpiradas,
   marcarLogin,
 } from "./session";
+import { validarTrocaSenha } from "./troca-senha";
 
 export type EstadoLogin = { erro?: string };
 
@@ -146,4 +151,55 @@ export async function entrar(
 export async function sair(): Promise<void> {
   await destruirSessaoAtual();
   redirect("/login");
+}
+
+// -------------------------------------------------------------- troca de senha
+
+export type EstadoTrocaSenha = {
+  erro?: string;
+  sucesso?: string;
+};
+
+/**
+ * Troca a senha do usuario autenticado.
+ *
+ * Exige a senha atual mesmo havendo sessao valida: sem isso, um cookie roubado
+ * permitiria trocar a senha e tomar a conta em definitivo.
+ */
+export async function alterarSenha(
+  _estadoAnterior: EstadoTrocaSenha,
+  dados: FormData,
+): Promise<EstadoTrocaSenha> {
+  const sessao = await requireSessao("/conta");
+
+  const entrada = {
+    senhaAtual: String(dados.get("senhaAtual") ?? ""),
+    novaSenha: String(dados.get("novaSenha") ?? ""),
+    confirmacao: String(dados.get("confirmacao") ?? ""),
+  };
+
+  const problema = validarTrocaSenha(entrada);
+  if (problema) return { erro: problema };
+
+  const hashAtual = await buscarHashDeSenha(sessao.userId);
+  if (!hashAtual) {
+    return { erro: "Nao foi possivel ler o cadastro do usuario." };
+  }
+
+  const senhaAtualCorreta = await verifyPassword(entrada.senhaAtual, hashAtual);
+  if (!senhaAtualCorreta) {
+    return { erro: "A senha atual esta incorreta." };
+  }
+
+  await atualizarSenha(sessao.userId, await hashPassword(entrada.novaSenha));
+
+  // Derruba sessoes em outros navegadores/dispositivos, mantendo esta.
+  const encerradas = await destruirOutrasSessoes(sessao.userId);
+
+  return {
+    sucesso:
+      encerradas > 0
+        ? `Senha alterada. ${encerradas} outra(s) sessao(oes) foram encerradas.`
+        : "Senha alterada com sucesso.",
+  };
 }

@@ -146,8 +146,9 @@ unset ADMIN_PASSWORD
 ```
 
 Rodar de novo para o mesmo e-mail redefine a senha, o perfil, e **encerra as
-sessões abertas** daquele usuário. É também o procedimento de troca de senha:
-não há tela para isso.
+sessões abertas** daquele usuário. Use para criar acesso ou destravar quem
+esqueceu a senha — o usuário comum troca a própria senha em `/conta`, informando
+a senha atual.
 
 **Revogar acesso sem apagar histórico:**
 

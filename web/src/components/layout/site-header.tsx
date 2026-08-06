@@ -42,12 +42,18 @@ export function SiteHeader({ sessao }: { sessao: Sessao }) {
           <span aria-hidden className="hidden h-8 w-px bg-veri-offwhite sm:block" />
 
           <div className="flex items-center gap-3">
-            <span className="hidden text-right text-xs leading-tight sm:block">
+            {/* O nome do usuario e o acesso a /conta, onde se troca a senha. */}
+            <Link
+              href="/conta"
+              className="hidden rounded-lg px-2 py-1 text-right text-xs leading-tight transition-colors hover:bg-veri-offwhite sm:block"
+            >
               <span className="block text-veri-verde-escuro">
                 {sessao.nome ?? sessao.email}
               </span>
-              <span className="block text-veri-verde-escuro/60">{sessao.papel}</span>
-            </span>
+              <span className="block text-veri-verde-escuro/60">
+                {sessao.papel} · minha conta
+              </span>
+            </Link>
 
             {/* Server action direto no form: logout funciona sem JS no cliente. */}
             <form action={sair}>

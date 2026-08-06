@@ -103,8 +103,13 @@ ADMIN_EMAIL="nome@porveri.com.br" ADMIN_PASSWORD="..." npm run create-admin
 | `ADMIN_ROLE` | não | `ADMIN` (padrão) ou `VIEWER` |
 
 O comando é **idempotente**: rodar de novo para o mesmo e-mail redefine a senha e
-o papel, e encerra as sessões abertas daquele usuário. É também o caminho para
-trocar senha — não há tela de troca de senha nesta etapa.
+o papel, e encerra as sessões abertas daquele usuário. Serve tanto para criar o
+primeiro acesso quanto para destravar quem esqueceu a senha.
+
+O próprio usuário troca a senha em **`/conta`** (link no cabeçalho, sobre o nome).
+A senha atual é exigida mesmo com a sessão aberta — sem isso, um cookie roubado
+permitiria tomar a conta em definitivo. Ao trocar, as sessões abertas em outros
+navegadores são encerradas e a atual é preservada.
 
 ### Como testar login e logout
 
@@ -121,6 +126,7 @@ npm run dev        # ou: npm start, para exercitar o build de produção
 | `/dashboard` sem sessão | Redireciona para `/login?next=%2Fdashboard` |
 | `/dashboard` com sessão | Renderiza a visão executiva |
 | Botão **Sair** | Volta para `/login`, apaga a linha em `app_sessions` e o cookie |
+| `/conta` → trocar senha | Senha atual errada é recusada; troca válida confirma sucesso e mantém a sessão |
 | 5 senhas erradas seguidas | Bloqueio de 5 minutos para aquele e-mail + IP |
 | `/diagnostico` com perfil `VIEWER` | Redireciona para `/sem-permissao` |
 
@@ -154,6 +160,7 @@ src/
       layout.tsx             FRONTEIRA DE AUTENTICAÇÃO: requireSessao()
       dashboard/             visão executiva
       dashboard/analitico/   rota protegida (conteúdo na próxima etapa)
+      conta/                 dados da sessão e troca de senha
       diagnostico/           somente ADMIN
       sem-permissao/         403 de perfil insuficiente
     api/health/route.ts      usado pelo HEALTHCHECK do container (público)
@@ -168,6 +175,7 @@ src/
       dal.ts                 getSessao, requireSessao, requirePapel
       actions.ts             server actions de entrar/sair + throttle
       destino.ts             validação anti-open-redirect do parâmetro `next`
+      troca-senha.ts         regras de troca de senha (puro, testável)
     db.ts                    pool pg, timeouts, checagem de saúde
     env.ts                   validação de env (lazy: o build não precisa do banco)
     format.ts                formatação pt-BR; valores em USD, sem conversão
