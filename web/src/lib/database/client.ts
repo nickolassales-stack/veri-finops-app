@@ -3,19 +3,26 @@ import "server-only";
 import { Pool, type QueryResultRow } from "pg";
 import { connection } from "next/server";
 
-import { getEnv } from "./env";
+import { getEnv } from "@/lib/env";
+
+import { registrarTiposPg } from "./tipos-pg";
 
 /**
- * Acesso ao PostgreSQL do FinOps.
+ * Ponto unico de acesso ao PostgreSQL do FinOps.
  *
  * Premissas de seguranca:
  * - A aplicacao fala SOMENTE com o PostgreSQL. Nunca com Athena/S3/AWS.
- * - A conexao usa a rede interna do docker compose (host `postgres`), portanto
- *   a porta 5432 continua sem exposicao publica.
- * - O que a aplicacao pode ou nao escrever e decidido pelos GRANTs do role no
- *   banco, nao pelo codigo. Ver docs/RUNBOOK-app.md.
+ * - Em producao a conexao usa a rede interna do docker compose (host
+ *   `postgres`), portanto a porta 5432 continua sem exposicao publica.
+ * - O que a aplicacao pode ou nao escrever e decidido pelos GRANTs do role
+ *   `finops_app` no banco, nao pelo codigo. As tabelas do ETL
+ *   (`aws_daily_costs`, `aws_monthly_costs`) sao SELECT-only para este role.
  * - `statement_timeout` protege o banco compartilhado com o Metabase.
+ * - Nenhuma credencial e exportada: este modulo e `server-only` e o pool nunca
+ *   cruza a fronteira para o cliente.
  */
+
+registrarTiposPg();
 
 // Reaproveita o pool entre recompilacoes do dev server (HMR) e entre
 // requisicoes em producao. Sem isso, cada reload abriria um pool novo.
@@ -58,7 +65,9 @@ export function getPool(): Pool {
  * sem ele, o Next poderia tentar executar a query na hora do `next build`
  * (quando o banco nao existe) e congelar o resultado na pagina estatica.
  *
- * Sempre use placeholders ($1, $2...). Nunca interpole valor em SQL.
+ * Sempre use placeholders ($1, $2...). Nunca interpole valor em SQL --
+ * `ConstrutorParams` existe justamente para montar filtros dinamicos sem
+ * concatenar nada vindo do usuario.
  */
 export async function query<T extends QueryResultRow>(
   sql: string,

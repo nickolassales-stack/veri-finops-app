@@ -163,7 +163,10 @@ src/
       conta/                 dados da sessão e troca de senha
       diagnostico/           somente ADMIN
       sem-permissao/         403 de perfil insuficiente
-    api/health/route.ts      usado pelo HEALTHCHECK do container (público)
+    api/
+      health/route.ts        usado pelo HEALTHCHECK do container (público)
+      accounts/              cadastro de contas AWS
+      dashboard/             summary, accounts, services, daily, daily-by-service
   components/
     layout/                  header, nav, footer
     charts/                  gráficos (tema e paleta validados)
@@ -176,14 +179,32 @@ src/
       actions.ts             server actions de entrar/sair + throttle
       destino.ts             validação anti-open-redirect do parâmetro `next`
       troca-senha.ts         regras de troca de senha (puro, testável)
-    db.ts                    pool pg, timeouts, checagem de saúde
+    api/
+      http.ts                contrato { dados, meta } / { erro }; tradução de falhas
+      rota.ts                envelope das rotas: exige sessão, padroniza resposta
+    database/
+      client.ts              pool pg, timeouts, checagem de saúde
+      sql.ts                 ConstrutorParams, escape de LIKE, lista fechada
+      tipos-pg.ts            date → string; timestamp → UTC (ver achado 7 do schema)
+    filtros/
+      periodo.ts             resolução de período (PURO, testável)
+      esquemas.ts            validação Zod de tudo que chega pela URL
+    queries/                 SQL por domínio
+    services/                orquestra filtro + queries para os endpoints
     env.ts                   validação de env (lazy: o build não precisa do banco)
     format.ts                formatação pt-BR; valores em USD, sem conversão
     nav.ts                   navegação (só rotas já implementadas)
-    queries/                 SQL por domínio
 scripts/
   create-admin.mjs           criação/atualização de usuário
 ```
+
+## API de dados
+
+Seis endpoints protegidos consomem o PostgreSQL: `/api/accounts` e
+`/api/dashboard/{summary,accounts,services,daily,daily-by-service}`.
+
+Contrato, parâmetros de filtro, códigos de erro e as decisões por trás do
+período padrão estão em **[../docs/API-dados.md](../docs/API-dados.md)**.
 
 ## Convenções
 

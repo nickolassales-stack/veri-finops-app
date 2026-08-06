@@ -4,7 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { cookies } from "next/headers";
 
-import { query, queryOne } from "@/lib/db";
+import { query, queryOne } from "@/lib/database";
 import { getEnv } from "@/lib/env";
 
 /**

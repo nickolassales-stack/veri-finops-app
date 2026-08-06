@@ -1,7 +1,7 @@
 import { Aviso } from "@/components/ui/aviso";
 import { Card } from "@/components/ui/card";
 import { requirePapel } from "@/lib/auth/dal";
-import { checkDbHealth } from "@/lib/db";
+import { checkDbHealth } from "@/lib/database";
 import { formatInteiro } from "@/lib/format";
 import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico";
 

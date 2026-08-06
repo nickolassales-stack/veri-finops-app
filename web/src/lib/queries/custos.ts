@@ -1,6 +1,6 @@
 import "server-only";
 
-import { query, queryOne } from "@/lib/db";
+import { query, queryOne } from "@/lib/database";
 import { toNumber } from "@/lib/format";
 
 /**
@@ -46,7 +46,7 @@ export type Kpis = {
 
 export async function getKpis(tz: string): Promise<Kpis> {
   const row = await queryOne<{
-    mes_referencia: Date;
+    mes_referencia: string;
     mes_atual: string;
     mes_anterior: string;
     lancado_no_futuro: string;
@@ -188,7 +188,7 @@ export type PontoMensal = {
 };
 
 export async function getSerieMensal(tz: string): Promise<PontoMensal[]> {
-  const rows = await query<{ month: Date; total: string; futuro: boolean }>(
+  const rows = await query<{ month: string; total: string; futuro: boolean }>(
     `
     WITH ref AS (SELECT ${SQL_MES_REF} AS mes)
     SELECT m.month, sum(m.cost_amount) AS total, (m.month > r.mes) AS futuro
@@ -210,7 +210,7 @@ export type PontoDiario = { data: string; total: number };
 
 /** Janela de `dias` terminando HOJE (nunca em max(usage_date)). */
 export async function getSerieDiaria(tz: string, dias = 30): Promise<PontoDiario[]> {
-  const rows = await query<{ usage_date: Date; total: string }>(
+  const rows = await query<{ usage_date: string; total: string }>(
     `
     WITH ref AS (SELECT (now() AT TIME ZONE $1)::date AS hoje)
     SELECT d.usage_date, sum(d.cost_amount) AS total
@@ -326,15 +326,15 @@ export async function getRollup(tz: string, dimensao: Dimensao): Promise<LinhaRo
 export type Frescor = {
   ultimaCargaMensal: Date | null;
   ultimaCargaDiaria: Date | null;
-  /** Maior usage_date presente -- pode estar no futuro. */
-  maiorDataUso: Date | null;
+  /** Maior usage_date presente, "AAAA-MM-DD" -- pode estar no futuro. */
+  maiorDataUso: string | null;
 };
 
 export async function getFrescor(): Promise<Frescor> {
   const row = await queryOne<{
     mensal: Date | null;
     diaria: Date | null;
-    maior_data_uso: Date | null;
+    maior_data_uso: string | null;
   }>(`
     SELECT
       (SELECT max(created_at) FROM aws_monthly_costs) AS mensal,

@@ -1,4 +1,4 @@
-import { checkDbHealth } from "@/lib/db";
+import { checkDbHealth } from "@/lib/database";
 
 // Health check nunca pode ser cacheado nem prerenderizado.
 export const dynamic = "force-dynamic";
