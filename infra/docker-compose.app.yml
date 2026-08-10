@@ -57,6 +57,13 @@ services:
       AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-12}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
 
+      # Cotacao USD/BRL (estimativa visual). Unica chamada externa da aplicacao:
+      # HTTPS para o Banco Central. Use `nenhum` se a saida for bloqueada -- o
+      # portal continua funcionando, exibindo apenas USD.
+      EXCHANGE_RATE_PROVIDER: ${EXCHANGE_RATE_PROVIDER:-ptax}
+      EXCHANGE_RATE_CACHE_TTL_SECONDS: ${EXCHANGE_RATE_CACHE_TTL_SECONDS:-3600}
+      EXCHANGE_RATE_TIMEOUT_MS: ${EXCHANGE_RATE_TIMEOUT_MS:-4000}
+
     # Padrao seguro: acessivel apenas de dentro da EC2 (via tunel SSH para
     # validacao). Para liberar a usuarios de gestao, publique atras de
     # Nginx + HTTPS e restrinja o Security Group -- nao troque para 0.0.0.0

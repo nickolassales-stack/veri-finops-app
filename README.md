@@ -29,7 +29,10 @@ roteiro de teste: [web/README.md · Autenticação](web/README.md#autenticação
 
 ## Regras do projeto
 
-- A aplicação consome **apenas** o PostgreSQL. Nunca Athena, S3 ou API AWS.
+- Dado de custo vem **apenas** do PostgreSQL. Nunca Athena, S3 ou API AWS.
+- A única chamada externa é a cotação USD/BRL no Banco Central, e ela é
+  dispensável: se falhar, o portal segue exibindo USD.
+- Valor oficial é **USD**. O BRL é estimativa visual e nunca é gravado.
 - O PostgreSQL não tem exposição pública; o Metabase e o ETL seguem intocados.
 - Nenhum dado mockado: sem banco, a tela mostra erro em vez de número inventado.
 - Segredos nunca são versionados. Ver [infra/.env.example](infra/.env.example).

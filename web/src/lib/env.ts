@@ -37,6 +37,30 @@ const envSchema = z.object({
    * localhost -- e nesse caso a sessao viaja em claro na rede. O certo e
    * colocar Nginx + HTTPS na frente e manter `true`.
    */
+  /**
+   * Fonte da cotacao USD/BRL. `nenhum` desliga a estimativa: a aplicacao
+   * continua exibindo USD normalmente, sem tentar sair para a internet.
+   */
+  EXCHANGE_RATE_PROVIDER: z.enum(["ptax", "sgs", "nenhum"]).default("ptax"),
+
+  /**
+   * Validade do cache da cotacao. Padrao 1 hora: o PTAX publica um boletim de
+   * fechamento por dia util, entao buscar de hora em hora ja pega o novo valor
+   * logo apos as 13h sem martelar o servico do Banco Central.
+   */
+  EXCHANGE_RATE_CACHE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(604_800)
+    .default(3_600),
+
+  /**
+   * Teto de espera pela API externa. Curto de proposito: a cotacao e um
+   * enfeite do dashboard e nao pode segurar a resposta do custo em USD.
+   */
+  EXCHANGE_RATE_TIMEOUT_MS: z.coerce.number().int().positive().max(30_000).default(4_000),
+
   AUTH_COOKIE_SECURE: z
     .enum(["true", "false", "1", "0"])
     .default("true")

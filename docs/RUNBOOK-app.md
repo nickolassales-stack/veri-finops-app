@@ -11,7 +11,8 @@
 | | |
 |---|---|
 | **É** | Aplicação Next.js 16 (TypeScript), servidor Node, um único container Docker |
-| **Consome** | Somente o PostgreSQL `finops`, pela rede interna do docker compose |
+| **Consome** | O PostgreSQL `finops`, pela rede interna do compose. Todo dado de custo vem daí |
+| **Consome também** | HTTPS para o Banco Central, só para a cotação USD/BRL. Dispensável: se falhar, o portal segue em USD (`EXCHANGE_RATE_PROVIDER=nenhum` desliga) |
 | **Não consome** | Athena, Glue, S3 ou qualquer API AWS — a aplicação não tem credencial AWS |
 | **Não altera** | Containers `finops-postgres` e `finops-metabase`, o `docker-compose.yml` atual, o ETL, o Metabase |
 | **Não contém** | Dado mockado. Toda tela lê o banco real; sem banco, a tela mostra erro em vez de número inventado |
@@ -36,6 +37,10 @@ camada de visão executiva e governança.
 
 - A porta 5432 continua publicada **apenas** em `127.0.0.1` pelo compose original.
   A aplicação nunca precisa dela: fala com `postgres` por DNS interno.
+- Única saída para fora: HTTPS ao Banco Central (`olinda.bcb.gov.br`,
+  `api.bcb.gov.br`) para a cotação USD/BRL. Verificado em 06/08/2026 que host e
+  container alcançam os dois. Se o egress for fechado no futuro, defina
+  `EXCHANGE_RATE_PROVIDER=nenhum` — o portal continua funcionando, só em USD.
 - `PG_POOL_MAX=5` e `statement_timeout=15s` protegem o banco compartilhado com o Metabase.
 - Limite de memória de 512 MiB no container. Medido em teste: **~49 MiB em uso**.
   A instância tem ~4 GiB e o Metabase (JVM) já sofreu OOM nela — daí o teto.

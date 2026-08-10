@@ -200,11 +200,71 @@ scripts/
 
 ## API de dados
 
-Seis endpoints protegidos consomem o PostgreSQL: `/api/accounts` e
-`/api/dashboard/{summary,accounts,services,daily,daily-by-service}`.
+Sete endpoints protegidos: `/api/accounts`,
+`/api/dashboard/{summary,accounts,services,daily,daily-by-service}` e
+`/api/exchange-rate`.
 
 Contrato, parâmetros de filtro, códigos de erro e as decisões por trás do
 período padrão estão em **[../docs/API-dados.md](../docs/API-dados.md)**.
+
+## Cotação USD/BRL
+
+**Fonte: Banco Central do Brasil.** Dois provedores, ambos oficiais e sem
+autenticação:
+
+| `EXCHANGE_RATE_PROVIDER` | Fonte | Observação |
+|---|---|---|
+| `ptax` (padrão) | PTAX venda, via OData do Olinda | traz a **hora** do boletim |
+| `sgs` | Série 1 do SGS | mesmo valor, só a **data** |
+| `nenhum` | — | desliga a estimativa; nenhuma chamada externa |
+
+### A conversão é estimativa, não valor contábil
+
+O valor oficial da AWS é **em USD** — é assim que ele é armazenado, somado e
+exibido. O BRL aparece apenas como ordem de grandeza ao lado, e **nada em BRL é
+gravado no banco**: a estimativa é calculada na leitura e morre com a resposta.
+
+A PTAX de um dia não é a taxa que a fatura aplicou. A taxa real depende da data
+de fechamento do câmbio, do spread do emissor e do IOF. Por isso toda resposta
+que traz BRL carrega junto o campo `aviso`.
+
+### Comportamento quando a fonte falha
+
+A ordem é sempre esta, e `obterCotacao()` **nunca lança** — é o que garante que
+o custo em USD continue aparecendo:
+
+| Situação | `status` | O que a tela mostra |
+|---|---|---|
+| Buscou agora | `current` | cotação normal |
+| Cache dentro do TTL | `cached`, `desatualizada: false` | cotação normal |
+| Falhou, mas há valor guardado | `cached`, **`desatualizada: true`** | valor + marca de desatualizado |
+| Falhou e não há nada | `unavailable` | **só USD**; `estimativaBRL.total` vem `null` |
+
+`null` e não zero: zero seria lido como "custo zero" — número inventado, que
+este projeto não exibe.
+
+O cache é em memória do processo, com duas camadas: dentro do TTL evita ida à
+rede; passado o TTL o valor **não é descartado**, vira reserva para o caso de a
+próxima busca falhar (até 7 dias). **Limitação:** o cache some no restart do
+container. Nada quebra — a primeira requisição busca de novo, e se o BCB estiver
+fora naquele instante, o portal segue em USD.
+
+### Configuração
+
+| Variável | Padrão | O que faz |
+|---|---|---|
+| `EXCHANGE_RATE_PROVIDER` | `ptax` | fonte, ou `nenhum` para desligar |
+| `EXCHANGE_RATE_CACHE_TTL_SECONDS` | `3600` | validade do cache |
+| `EXCHANGE_RATE_TIMEOUT_MS` | `4000` | teto de espera pela API externa |
+
+Exige **saída HTTPS do container** para `olinda.bcb.gov.br` e `api.bcb.gov.br`.
+Verificado na EC2 FinOps em 06/08/2026 (host e container respondem 200). Se a
+saída for bloqueada, use `nenhum`.
+
+> **Por que consultar um período e não "a cotação de hoje":** o boletim de
+> fechamento sai por volta das 13h. Consultar a data de hoje devolve vazio a
+> manhã inteira — e o fim de semana e feriado inteiros. O provedor PTAX consulta
+> os últimos 10 dias e pega o boletim mais recente.
 
 ## Convenções
 

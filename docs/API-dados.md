@@ -103,12 +103,46 @@ Parâmetros: `busca` (id, nome, unidade ou centro de custo), `apenasAtivas`,
   "ultimoDiaComDado": "2026-08-05", "mediaDiaria": 8.52 }
 ```
 
+Acompanha um bloco `estimativaBRL`:
+
+```json
+{ "total": 422.78, "totalAnterior": 648.74,
+  "cotacao": { "valor": 5.0908, "dataReferencia": "2026-08-07", "fonte": "…",
+               "status": "cached", "desatualizada": false, "mensagemErro": null },
+  "aviso": "Conversao meramente indicativa. O valor oficial da AWS e em USD; …" }
+```
+
+**O número oficial é `total`, em USD.** O BRL é estimativa visual e vem `null`
+— nunca zero — quando não há cotação. Nada em BRL é gravado no banco.
+
 > **`comparavel: false` é o campo mais importante da resposta.** Ele fica falso
 > quando o *conjunto* de contas com dado muda entre as duas janelas — não a
 > quantidade, o conjunto. Hoje agosto tem só a conta nova e julho tinha só a
 > piloto: uma conta em cada, contas diferentes. A variação de −54% existe no
 > JSON mas mede ausência de carga, não consumo. **Quem consome deve exibir o
 > aviso no lugar do percentual.**
+
+### `GET /api/exchange-rate`
+
+Cotação USD/BRL usada nas estimativas. **Fonte: Banco Central do Brasil**
+(PTAX por padrão; ver [web/README.md § Cotação](../web/README.md#cotação-usdbrl)).
+
+```json
+{ "valor": 5.0908, "dataReferencia": "2026-08-07",
+  "dataHoraReferencia": "2026-08-07T16:04:19.455Z",
+  "fonte": "Banco Central do Brasil — PTAX (venda)", "provedor": "ptax",
+  "status": "current", "desatualizada": false, "mensagemErro": null,
+  "obtidaEm": "2026-08-07T18:22:10.004Z", "idadeSegundos": 0 }
+```
+
+Responde **200 mesmo quando a cotação está indisponível** — o endpoint
+funcionou; quem falhou foi a fonte externa. O que houve está em `status`
+(`current` · `cached` · `unavailable`) e `mensagemErro`. Devolver 503 faria o
+cliente tratar como falha de infraestrutura da aplicação, que não é o caso.
+
+> `desatualizada: true` significa que o cache passou do TTL e a renovação
+> falhou. O número ainda serve para ordem de grandeza, mas **a interface precisa
+> marcá-lo visualmente como velho**.
 
 ### `GET /api/dashboard/accounts`
 

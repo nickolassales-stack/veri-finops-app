@@ -1,6 +1,13 @@
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    // Mesmo alias do tsconfig. Sem isto, todo modulo que importa "@/..." falha
+    // no vitest (o Next resolve sozinho, o vitest nao).
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+  },
   test: {
     // Testes de auth usam node:crypto e nao precisam de DOM.
     environment: "node",
