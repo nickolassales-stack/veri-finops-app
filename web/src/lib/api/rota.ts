@@ -67,3 +67,57 @@ export function rotaProtegida(
     }
   };
 }
+
+/**
+ * Variante para rotas que devolvem ARQUIVO, nao o envelope `{ dados, meta }`.
+ *
+ * Mesma porta de entrada: sessao verificada contra o banco antes de qualquer
+ * outra coisa, mesma taxonomia de erro. So o sucesso muda de forma -- o
+ * manipulador monta a propria `Response` com o corpo e os cabecalhos do
+ * download.
+ *
+ * O FRACASSO continua saindo em JSON de proposito: quem baixa e a tela, por
+ * `fetch`, e ela precisa da mesma estrutura de erro que ja sabe interpretar.
+ */
+export function rotaProtegidaArquivo(
+  nome: string,
+  manipulador: (ctx: ContextoRota) => Promise<Response>,
+) {
+  return async function handler(request: Request): Promise<Response> {
+    try {
+      const sessao = await getSessao();
+      if (!sessao) {
+        return respostaErro(
+          "nao-autenticado",
+          "Sessao ausente ou expirada. Entre novamente.",
+        );
+      }
+
+      return await manipulador({
+        url: new URL(request.url),
+        sessao,
+        tz: getEnv().APP_TZ,
+      });
+    } catch (err) {
+      return traduzirFalha(nome, err);
+    }
+  };
+}
+
+/**
+ * Cabecalhos de download.
+ *
+ * `filename*` (RFC 5987) alem de `filename`: o nome carrega so ASCII hoje, mas
+ * um acento futuro sem essa forma chegaria corrompido no navegador.
+ */
+export function cabecalhosDeArquivo(nome: string, tipo: string): HeadersInit {
+  return {
+    "content-type": tipo,
+    "content-disposition":
+      `attachment; filename="${nome}"; filename*=UTF-8''${encodeURIComponent(nome)}`,
+    // Dado financeiro por sessao: nunca em cache de navegador ou intermediario.
+    "cache-control": "no-store, private",
+    // O corpo e um arquivo; nao deve ser interpretado como nada mais.
+    "x-content-type-options": "nosniff",
+  };
+}

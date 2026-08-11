@@ -144,6 +144,21 @@ export function paramsDaApiAnalitico(f: FiltrosAnalitico): URLSearchParams {
 }
 
 /**
+ * Query string das rotas `/api/export/*`.
+ *
+ * DERIVA da query do analitico, removendo so a paginacao. Escrita a parte, ela
+ * poderia divergir com o tempo e o arquivo baixado deixaria de corresponder a
+ * tabela na tela -- que e o unico defeito realmente grave que uma exportacao
+ * pode ter, porque ninguem descobre olhando o arquivo.
+ */
+export function paramsDaApiExportacao(f: FiltrosAnalitico): URLSearchParams {
+  const params = paramsDaApiAnalitico(f);
+  params.delete("page");
+  params.delete("pageSize");
+  return params;
+}
+
+/**
  * Converte os presets relativos em datas.
  *
  * Precisa acontecer no cliente porque a API do analitico recebe apenas datas.

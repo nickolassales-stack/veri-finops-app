@@ -31,6 +31,7 @@ import {
 } from "@/lib/format";
 
 import { BarraFiltros } from "./barra-filtros";
+import { BotoesExportacao } from "./botoes-exportacao";
 import { FiltrosAnalitico } from "./filtros-analitico";
 import { TabelaAnalitica } from "./tabela-analitica";
 
@@ -90,6 +91,21 @@ export function PainelAnalitico({ tz }: { tz: string }) {
   const periodo = meta?.periodo;
   const linhas = dados.linhas ?? [];
   const temFiltroDeRefino = Boolean(filtros.busca.trim() || filtros.regiao);
+
+  /**
+   * Por que a exportacao esta indisponivel, se estiver.
+   *
+   * Botao desabilitado sem motivo escrito e um beco sem saida: a pessoa clica,
+   * nada acontece, e nao ha o que fazer a respeito. Cada caso aqui diz qual e a
+   * saida.
+   */
+  const motivoSemExportacao = problema
+    ? "Corrija o intervalo de datas para poder exportar."
+    : dados.erro
+      ? "A consulta falhou — não há o que exportar até ela carregar."
+      : paginacao?.total === 0
+        ? "Nenhum lançamento neste recorte para exportar."
+        : undefined;
 
   return (
     <div className="space-y-6">
@@ -178,6 +194,19 @@ export function PainelAnalitico({ tz }: { tz: string }) {
           </p>
         </Aviso>
       )}
+
+      {/* --------------------------------------------------- exportacao */}
+      <section
+        aria-label="Exportar os dados filtrados"
+        className="rounded-2xl border border-veri-offwhite bg-veri-branco p-5"
+      >
+        <BotoesExportacao
+          filtros={filtros}
+          total={paginacao?.total ?? null}
+          ocupado={dados.carregandoInicial || dados.carregandoPagina}
+          motivoIndisponivel={motivoSemExportacao}
+        />
+      </section>
 
       {/* ------------------------------------------------ total do filtro */}
       {paginacao && paginacao.total > 0 && (

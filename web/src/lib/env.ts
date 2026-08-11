@@ -61,6 +61,27 @@ const envSchema = z.object({
    */
   EXCHANGE_RATE_TIMEOUT_MS: z.coerce.number().int().positive().max(30_000).default(4_000),
 
+  /**
+   * Teto de linhas por exportacao (CSV ou XLSX).
+   *
+   * Existe porque exportar e a unica operacao da aplicacao cujo custo cresce com
+   * o tamanho da base, e nao com o tamanho da tela. O container roda com 512 MiB
+   * ao lado de um Metabase que ja sofreu OOM nesta instancia; um pedido de
+   * "exporte tudo" nao pode derrubar o portal.
+   *
+   * Acima do teto a exportacao e RECUSADA com mensagem pedindo para estreitar o
+   * filtro -- nunca truncada. Um arquivo cortado pela metade com cara de
+   * completo e o pior desfecho possivel para um relatorio financeiro.
+   *
+   * 50 mil linhas cobrem folgadamente ~2 anos da base atual (660 linhas hoje).
+   */
+  EXPORT_MAX_ROWS: z.coerce
+    .number({ error: "EXPORT_MAX_ROWS deve ser um numero inteiro." })
+    .int()
+    .positive()
+    .max(1_000_000)
+    .default(50_000),
+
   AUTH_COOKIE_SECURE: z
     .enum(["true", "false", "1", "0"])
     .default("true")

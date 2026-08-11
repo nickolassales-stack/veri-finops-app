@@ -64,6 +64,10 @@ services:
       EXCHANGE_RATE_CACHE_TTL_SECONDS: ${EXCHANGE_RATE_CACHE_TTL_SECONDS:-3600}
       EXCHANGE_RATE_TIMEOUT_MS: ${EXCHANGE_RATE_TIMEOUT_MS:-4000}
 
+      # Teto de linhas por exportacao. Protege a memoria do container: acima
+      # dele a exportacao e recusada, nunca truncada. Ver infra/.env.example.
+      EXPORT_MAX_ROWS: ${EXPORT_MAX_ROWS:-50000}
+
     # Padrao seguro: acessivel apenas de dentro da EC2 (via tunel SSH para
     # validacao). Para liberar a usuarios de gestao, publique atras de
     # Nginx + HTTPS e restrinja o Security Group -- nao troque para 0.0.0.0

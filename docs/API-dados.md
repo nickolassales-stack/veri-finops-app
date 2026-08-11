@@ -9,6 +9,9 @@ não são uma API pública.
 
 ## Contrato
 
+Vale para todos os endpoints de dados. As duas rotas de **exportação** são a
+única exceção no sucesso: devolvem arquivo, não JSON (o erro continua igual).
+
 Sucesso — sempre `{ dados, meta }`:
 
 ```json
@@ -38,6 +41,7 @@ Erro — sempre `{ erro }`, nunca com `dados` junto:
 |---|---:|---|
 | `nao-autenticado` | 401 | Sem sessão, sessão expirada ou cookie forjado |
 | `parametros-invalidos` | 400 | Falha de validação — traz `detalhes` por campo |
+| `exportacao-muito-grande` | 413 | O filtro é válido, mas seleciona mais linhas que `EXPORT_MAX_ROWS` |
 | `consulta-excedeu-tempo` | 504 | `statement_timeout` do Postgres |
 | `banco-indisponivel` | 503 | Sem conexão com o banco |
 | `erro-interno` | 500 | Qualquer outra falha |
@@ -191,6 +195,53 @@ usando o índice UNIQUE que já existe (cuja primeira coluna é `usage_date`, o 
 serve tanto ao corte por período quanto à ordenação padrão). Nenhum índice novo
 foi criado. A proposta reversível e os gatilhos objetivos para revisitar estão em
 [`scripts/proposta-indices-analitico.sql`](../scripts/proposta-indices-analitico.sql).
+
+### `GET /api/export/csv` e `GET /api/export/xlsx`
+
+Os lançamentos do filtro atual, como arquivo. **Não devolvem o envelope
+`{ dados, meta }`** — devolvem o arquivo. A falha, essa sim, continua saindo em
+JSON no formato de sempre, para a tela saber distinguir "sessão expirada" de
+"filtro largo demais".
+
+Aceitam **exatamente os mesmos parâmetros** de `/api/dashboard/analytic`, **menos
+`page` e `pageSize`**: exportar é "tudo o que este filtro seleciona", não "a
+página que estava aberta". O contrato é literalmente compartilhado
+(`lib/services/parametros-analiticos`) e a leitura usa a mesma função de query da
+tela — não existe um "SELECT da exportação" paralelo que possa divergir.
+
+| | |
+|---|---|
+| Nome do arquivo | `veri-finops-AAAA-MM-DD_AAAA-MM-DD.{csv,xlsx}`, com o período **efetivamente aplicado** |
+| Cabeçalhos | `content-disposition: attachment` (+ forma RFC 5987), `cache-control: no-store, private`, `x-content-type-options: nosniff` |
+| Colunas | data de uso · conta AWS · nome da conta · serviço · região · **USD (oficial)** · **BRL (estimado)** · cotação utilizada · data/hora da cotação |
+| Metadados | período, contas, data/hora da exportação, fonte/valor/status da cotação e os dois avisos (USD oficial, BRL estimativa) |
+
+No CSV os metadados vão no topo, em linhas `# rótulo;valor` (o `#` permite
+`pandas.read_csv(..., comment='#')`); no XLSX vão na aba **Contexto**, separados
+da aba **Lançamentos** para não atrapalhar autofiltro e tabela dinâmica.
+
+**CSV para Excel pt-BR:** BOM UTF-8 (sem ele o Excel do Windows abre em ANSI e
+"Serviço" vira "Serviço"), separador `;`, decimal com vírgula e CRLF. Campos de
+texto recebem proteção contra **injeção de fórmula** — `service` e `account_name`
+vêm do ETL, e um valor iniciado por `=`, `+`, `-` ou `@` seria executado ao abrir
+a planilha. Números não passam por essa proteção, senão um crédito negativo
+deixaria de somar.
+
+**Escala:** USD e BRL saem com 6 casas, a escala real de `numeric(18,6)`. Há
+lançamentos de US$ 0,000001 na base — exportar com 2 casas, como a tela mostra,
+zeraria linhas reais.
+
+**Memória.** O CSV é transmitido em fluxo, com o banco lido em lotes de 2.000
+linhas: o pico não depende do tamanho do arquivo. O XLSX precisa montar a
+planilha inteira antes de compactar (é um zip de XML), e é esse caminho que
+`EXPORT_MAX_ROWS` (padrão 50.000) protege. Acima do teto a resposta é **413
+`exportacao-muito-grande`**, com o total e o limite na mensagem — **nunca um
+arquivo truncado**, que teria cara de completo.
+
+Durante a exportação nenhum lote enxerga linha inserida depois do início: a
+consulta fixa um teto de `id` na largada. Sem isso, uma carga do ETL no meio do
+processo deslocaria o `OFFSET` dos lotes seguintes e o arquivo sairia com linha
+repetida ou faltando.
 
 ### `GET /api/dashboard/accounts`
 

@@ -129,6 +129,26 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
 }
 
 /**
+ * Nome amigavel de cada conta pedida, para descrever o recorte de uma
+ * exportacao.
+ *
+ * Ler o nome das PROPRIAS linhas exportadas nao serve: uma conta filtrada que
+ * nao teve custo no periodo nao aparece em nenhuma linha, e o cabecalho do
+ * arquivo precisa dizer que ela estava no recorte mesmo assim -- caso contrario
+ * o total parece de um filtro que nao foi o aplicado.
+ */
+export async function nomesDasContas(ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+
+  const linhas = await query<{ account_id: string; account_name: string | null }>(
+    `SELECT account_id, account_name FROM cloud_accounts WHERE account_id = ANY($1)`,
+    [ids],
+  );
+
+  return new Map(linhas.map((l) => [l.account_id, l.account_name ?? l.account_id]));
+}
+
+/**
  * Verifica quais dos ids informados existem no cadastro.
  *
  * Usado para avisar quando o filtro aponta para conta inexistente: sem isso o

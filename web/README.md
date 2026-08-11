@@ -223,6 +223,7 @@ src/
       dashboard/             summary, accounts, services, daily,
                              daily-by-service, analytic
       exchange-rate/         cotação USD/BRL
+      export/                csv e xlsx do recorte atual (devolvem ARQUIVO)
   components/
     layout/                  header (logo, usuário, sair), nav, footer
     dashboard/               painel executivo, barra de filtros, cards de KPI
@@ -246,8 +247,16 @@ src/
     filtros/
       periodo.ts             resolução de período (PURO, testável)
       esquemas.ts            validação Zod de tudo que chega pela URL
+    export/
+      colunas.ts             as 9 colunas -- fonte única de CSV e XLSX
+      csv.ts                 BOM, separador, decimal, anti-injeção (PURO)
+      metadados.ts           cabeçalho de contexto do arquivo (PURO)
+      dados.ts               teto de linhas + leitura em lotes
+      gerar-csv.ts           corpo em streaming
+      gerar-xlsx.ts          planilha de duas abas
     queries/                 SQL por domínio
     services/                orquestra filtro + queries para os endpoints
+      parametros-analiticos  contrato compartilhado por analytic e export/*
     dashboard/               filtros na URL (puro), cliente HTTP e hooks de dados
     exchange-rate/           cotação USD/BRL: provedores, cache, orquestrador
     env.ts                   validação de env (lazy: o build não precisa do banco)
@@ -259,12 +268,56 @@ scripts/
 
 ## API de dados
 
-Oito endpoints protegidos: `/api/accounts`,
-`/api/dashboard/{summary,accounts,services,daily,daily-by-service,analytic}` e
-`/api/exchange-rate`.
+Dez endpoints protegidos: `/api/accounts`,
+`/api/dashboard/{summary,accounts,services,daily,daily-by-service,analytic}`,
+`/api/exchange-rate` e `/api/export/{csv,xlsx}`.
 
 Contrato, parâmetros de filtro, códigos de erro e as decisões por trás do
 período padrão estão em **[../docs/API-dados.md](../docs/API-dados.md)**.
+
+## Exportação (CSV e XLSX)
+
+Botões em `/dashboard/analitico`. O arquivo é montado **no servidor** e contém
+tudo o que o filtro seleciona — não a página visível. O navegador só recebe o
+arquivo pronto: não formata, não soma e não converte nada.
+
+**Biblioteca do XLSX: [`write-excel-file`](https://www.npmjs.com/package/write-excel-file)**
+(MIT). Escolhida sobre `exceljs` por três motivos objetivos: uma dependência
+(`fflate`) contra nove; publicação recente (4.1.1, jun/2026) contra 4.4.0 de
+dez/2024; e escopo de **escrita apenas** — não carregamos um parser de xlsx/zip
+que só serviria para ler arquivo de terceiro, superfície que um servidor de dado
+financeiro não precisa ter. O CSV é escrito à mão: são ~90 linhas, e as decisões
+que importam (BOM, separador, decimal, anti-injeção) são justamente as que uma
+biblioteca genérica erraria para o Excel pt-BR.
+
+| | CSV | XLSX |
+|---|---|---|
+| Codificação | UTF-8 **com BOM**, separador `;`, decimal com vírgula, CRLF | — |
+| Metadados | linhas `# rótulo;valor` no topo | aba **Contexto** |
+| Dados | após uma linha em branco | aba **Lançamentos**, cabeçalho congelado |
+| Memória | **streaming**, lotes de 2.000 linhas | planilha inteira (é um zip de XML) |
+
+**Por que o BOM:** sem ele o Excel do Windows abre o arquivo em ANSI e "Serviço"
+vira "Serviço". **Por que `;`:** o Excel pt-BR usa o separador de lista do
+sistema; com vírgula, a planilha inteira cai numa coluna só.
+
+**Injeção de fórmula.** `service` e `account_name` vêm do ETL. Um valor iniciado
+por `=`, `+`, `-` ou `@` seria **executado** ao abrir a planilha na máquina de
+quem recebeu o arquivo (CWE-1236) — o `$1` do Postgres protege o banco, não o
+Excel de quem abre. Campos de texto recebem prefixo `'`; números não, senão um
+crédito negativo da AWS deixaria de somar.
+
+**Teto de volume — `EXPORT_MAX_ROWS` (padrão 50.000).** Conferido *antes* de
+gerar. Acima dele a exportação é **recusada** (HTTP 413) com a contagem e o
+limite na mensagem. Nunca truncada: relatório financeiro cortado pela metade tem
+cara de completo, e é o pior desfecho possível. O CSV em streaming não depende do
+teto; quem ele protege é o XLSX, que precisa existir inteiro na memória antes de
+ser compactado — num container de 512 MiB ao lado de um Metabase que já sofreu
+OOM nesta instância.
+
+Validado abrindo o arquivo gerado **no Excel** (16.0): duas abas, 231 linhas × 9
+colunas, datas reconhecidas como data, valores como número, e a soma da coluna
+USD calculada pelo próprio Excel batendo com o total da tela.
 
 ## Cotação USD/BRL
 

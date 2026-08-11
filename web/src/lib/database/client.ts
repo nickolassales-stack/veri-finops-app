@@ -74,6 +74,35 @@ export async function query<T extends QueryResultRow>(
   params: ReadonlyArray<unknown> = [],
 ): Promise<T[]> {
   await connection();
+  return executar<T>(sql, params);
+}
+
+/**
+ * Igual a `query`, mas SEM o `connection()`.
+ *
+ * Serve a um caso so: leitura feita enquanto o corpo da resposta JA esta sendo
+ * transmitido (a exportacao em CSV le o banco em lotes conforme escreve). Nesse
+ * momento a requisicao ja saiu do escopo do Next, e `connection()` lanca
+ * "`connection` was called outside a request scope" -- o que derruba o download
+ * pela metade, depois do status 200 ja ter sido enviado.
+ *
+ * Nao ha perda de protecao: o `connection()` existe para impedir que uma
+ * consulta rode durante o prerender, e um corpo que ja comecou a ser transmitido
+ * nunca esta em prerender. A rota que chega ate aqui ja executou consultas
+ * dentro do escopo (para resolver periodo e conferir volume), entao a requisicao
+ * ja foi marcada como dinamica.
+ */
+export async function queryForaDoEscopo<T extends QueryResultRow>(
+  sql: string,
+  params: ReadonlyArray<unknown> = [],
+): Promise<T[]> {
+  return executar<T>(sql, params);
+}
+
+async function executar<T extends QueryResultRow>(
+  sql: string,
+  params: ReadonlyArray<unknown>,
+): Promise<T[]> {
   const result = await getPool().query<T>(sql, params as unknown[]);
   return result.rows;
 }

@@ -21,18 +21,43 @@ export type CodigoErro =
   | "nao-autenticado"
   | "parametros-invalidos"
   | "consulta-excedeu-tempo"
+  | "exportacao-muito-grande"
   | "banco-indisponivel"
   | "erro-interno";
 
 const STATUS_POR_CODIGO: Record<CodigoErro, number> = {
   "nao-autenticado": 401,
   "parametros-invalidos": 400,
+  // 413: o pedido e valido, o resultado e que nao cabe. 400 diria "voce errou o
+  // parametro", que nao e o caso -- o filtro esta certo, so e largo demais.
+  "exportacao-muito-grande": 413,
   "consulta-excedeu-tempo": 504,
   "banco-indisponivel": 503,
   "erro-interno": 500,
 };
 
 export type DetalheErro = { campo: string; mensagem: string };
+
+/**
+ * Falha que ja sabe qual codigo da API ela e.
+ *
+ * Existe para que uma camada de dominio (a exportacao, por exemplo) possa
+ * recusar algo com a mensagem certa sem que `traduzirFalha` precise conhecer
+ * cada modulo do sistema -- o que criaria dependencia da camada generica de HTTP
+ * para dentro das regras de negocio.
+ *
+ * A mensagem AQUI e exibivel: quem lanca se compromete a nao colocar detalhe
+ * tecnico, host ou stack nela.
+ */
+export class ErroDeApi extends Error {
+  readonly codigo: CodigoErro;
+
+  constructor(codigo: CodigoErro, mensagem: string) {
+    super(mensagem);
+    this.name = "ErroDeApi";
+    this.codigo = codigo;
+  }
+}
 
 /** Erro de entrada do usuario. Sempre vira 400 com detalhe por campo. */
 export class ErroDeValidacao extends Error {
@@ -108,6 +133,12 @@ function codigoDoErro(err: unknown): string | undefined {
 export function traduzirFalha(rota: string, err: unknown): Response {
   if (err instanceof ErroDeValidacao) {
     return respostaErro("parametros-invalidos", err.message, err.detalhes);
+  }
+
+  // Recusa deliberada de uma camada de dominio: a mensagem ja foi escrita para
+  // o usuario final e nao passa pelo log de erro.
+  if (err instanceof ErroDeApi) {
+    return respostaErro(err.codigo, err.message);
   }
 
   const codigo = codigoDoErro(err);

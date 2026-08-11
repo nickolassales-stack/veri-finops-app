@@ -9,6 +9,7 @@ export {
   checkDbHealth,
   getPool,
   query,
+  queryForaDoEscopo,
   queryOne,
   type DbHealth,
 } from "./client";
