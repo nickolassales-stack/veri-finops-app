@@ -40,7 +40,23 @@ export async function resolverFiltroCusto<T extends EntradaFiltroCusto>(
   esquema: z.ZodType<T>,
 ): Promise<FiltroResolvido<T>> {
   const entrada = analisar(esquema, lerParametros(url));
+  const { filtro, meta } = await montarFiltro(entrada, tz);
+  return { entrada, filtro, meta };
+}
 
+/**
+ * Nucleo compartilhado: entrada JA normalizada -> filtro de query + meta.
+ *
+ * Separado de `resolverFiltroCusto` porque o endpoint do analitico recebe os
+ * parametros com nomes proprios (`startDate`, `accountIds`...) e faz a traducao
+ * antes de chegar aqui. Mantendo o nucleo unico, as duas telas resolvem periodo
+ * pela MESMA regra -- se cada uma tivesse a sua, o analitico poderia mostrar
+ * uma janela diferente da do painel para o mesmo filtro.
+ */
+export async function montarFiltro(
+  entrada: EntradaFiltroCusto,
+  tz: string,
+): Promise<{ filtro: FiltroCusto; meta: Record<string, unknown> }> {
   const contexto = await getContextoTemporal(tz);
   const periodo = resolverPeriodo(
     { preset: entrada.periodo, de: entrada.de, ate: entrada.ate },
@@ -58,7 +74,6 @@ export async function resolverFiltroCusto<T extends EntradaFiltroCusto>(
   };
 
   return {
-    entrada,
     filtro,
     meta: {
       periodo: {

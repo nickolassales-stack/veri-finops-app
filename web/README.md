@@ -213,14 +213,15 @@ src/
     (privado)/
       layout.tsx             FRONTEIRA DE AUTENTICAÇÃO: requireSessao()
       dashboard/             visão executiva
-      dashboard/analitico/   rota protegida (conteúdo na próxima etapa)
+      dashboard/analitico/   analítico: tabela paginada no servidor
       conta/                 dados da sessão e troca de senha
       diagnostico/           somente ADMIN
       sem-permissao/         403 de perfil insuficiente
     api/
       health/route.ts        usado pelo HEALTHCHECK do container (público)
       accounts/              cadastro de contas AWS
-      dashboard/             summary, accounts, services, daily, daily-by-service
+      dashboard/             summary, accounts, services, daily,
+                             daily-by-service, analytic
       exchange-rate/         cotação USD/BRL
   components/
     layout/                  header (logo, usuário, sair), nav, footer
@@ -258,8 +259,8 @@ scripts/
 
 ## API de dados
 
-Sete endpoints protegidos: `/api/accounts`,
-`/api/dashboard/{summary,accounts,services,daily,daily-by-service}` e
+Oito endpoints protegidos: `/api/accounts`,
+`/api/dashboard/{summary,accounts,services,daily,daily-by-service,analytic}` e
 `/api/exchange-rate`.
 
 Contrato, parâmetros de filtro, códigos de erro e as decisões por trás do

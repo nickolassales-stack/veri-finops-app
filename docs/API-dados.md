@@ -75,8 +75,10 @@ desloca pelo tamanho da janela. Limites: 731 dias e 50 contas por consulta.
 **Datas** são de calendário — sem hora e sem fuso. "Hoje" é calculado em
 `America/Sao_Paulo`, não em UTC.
 
-**Valores** saem em USD exatamente como no CUR. Não há conversão para BRL:
-não existe taxa oficial definida, e inventar uma produziria número errado.
+**Valores** saem em USD exatamente como no CUR — é o valor oficial. Onde há
+conversão para BRL (`summary` e `analytic`), ela é **estimativa** pela cotação do
+Banco Central, vem em campo próprio, e é `null` — nunca zero — quando não há
+cotação. Nada em BRL é gravado no banco.
 
 ## Endpoints
 
@@ -143,6 +145,52 @@ cliente tratar como falha de infraestrutura da aplicação, que não é o caso.
 > `desatualizada: true` significa que o cache passou do TTL e a renovação
 > falhou. O número ainda serve para ordem de grandeza, mas **a interface precisa
 > marcá-lo visualmente como velho**.
+
+### `GET /api/dashboard/analytic`
+
+Lançamentos linha a linha de `aws_daily_costs`, **paginados no banco**. É a fonte
+da tela `/dashboard/analitico`.
+
+> **Nomes de parâmetro próprios.** Esta rota usa `startDate`, `accountIds`,
+> `page`… enquanto as demais usam `de`, `contas`, `pagina`. A diferença é o
+> contrato definido para ela. A resolução de período, porém, é **a mesma**
+> (`montarFiltro`) — analítico e painel nunca mostram janelas diferentes para o
+> mesmo filtro.
+
+| Parâmetro | Valores | Padrão |
+|---|---|---|
+| `startDate`, `endDate` | `AAAA-MM-DD`, os dois juntos ou nenhum | período padrão |
+| `accountIds` | ids por vírgula, ou `todas` | todas |
+| `serviceSearch` | texto, até 100 caracteres (`ILIKE`, sem diferenciar caixa) | — |
+| `region` | valor como está na base, ou `nao-informado` | todas |
+| `page` | ≥ 1 | 1 |
+| `pageSize` | 1–200 | 50 |
+| `sortBy` | `usageDate` · `accountId` · `accountName` · `service` · `region` · `cost` | `usageDate` |
+| `sortDirection` | `asc` · `desc` | `desc` |
+
+```json
+{ "id": "6347", "usageDate": "2026-08-11", "accountId": "147997123577",
+  "accountName": "conta-147997123577", "service": "AmazonEC2",
+  "region": null, "costUSD": 3.4176, "currency": "USD", "estimatedBRL": 17.42 }
+```
+
+`region: null` é a tradução de `"nan"` — o cliente não precisa conhecer essa
+peculiaridade do ETL. `estimatedBRL` é convertido **no servidor** e vem `null`
+quando não há cotação; a cotação usada em toda a página está em `meta.cotacao`.
+
+`meta` traz ainda `paginacao` (`page`, `pageSize`, `total`, `pages`), `somaUSD`
+e `somaBRL` **de todo o filtro** (não da página) e `regioesDisponiveis` para
+montar o seletor.
+
+**Ordenação com desempate estável:** toda ordenação termina em `d.id ASC`. Sem
+isso, duas páginas poderiam repetir ou omitir uma linha — `OFFSET` não garante
+ordem entre linhas de mesmo valor.
+
+**Índices:** medido em 11/08/2026 com 642 linhas, a consulta roda em **1,2 ms**
+usando o índice UNIQUE que já existe (cuja primeira coluna é `usage_date`, o que
+serve tanto ao corte por período quanto à ordenação padrão). Nenhum índice novo
+foi criado. A proposta reversível e os gatilhos objetivos para revisitar estão em
+[`scripts/proposta-indices-analitico.sql`](../scripts/proposta-indices-analitico.sql).
 
 ### `GET /api/dashboard/accounts`
 

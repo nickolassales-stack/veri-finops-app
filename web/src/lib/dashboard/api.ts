@@ -36,11 +36,15 @@ export class ErroDeRequisicao extends Error {
   }
 }
 
-export async function buscarRecurso<T>(
+/**
+ * `M` existe porque cada endpoint enriquece o `meta` com campos proprios
+ * (paginacao, cotacao, regioes...). O padrao cobre quem nao precisa disso.
+ */
+export async function buscarRecurso<T, M = Envelope<T>["meta"]>(
   caminho: string,
   params: URLSearchParams,
   sinal?: AbortSignal,
-): Promise<Envelope<T>> {
+): Promise<{ dados: T; meta: M }> {
   const busca = params.toString();
   const url = busca ? `${caminho}?${busca}` : caminho;
 
@@ -69,7 +73,7 @@ export async function buscarRecurso<T>(
     );
   }
 
-  const envelope = corpo as Envelope<T> | null;
+  const envelope = corpo as { dados: T; meta: M } | null;
   if (!envelope || envelope.dados === undefined) {
     throw new ErroDeRequisicao(
       resposta.status,
