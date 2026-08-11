@@ -78,6 +78,41 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Pulsacao discreta do esqueleto de carregamento. Respeita quem pediu menos
+   movimento: com prefers-reduced-motion o bloco fica estatico. */
+.veri-pulsando {
+  animation: veri-pulso 1.6s ease-in-out infinite;
+}
+
+@keyframes veri-pulso {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .veri-pulsando {
+    animation: none;
+  }
+}
+
+/* Hachura a 45 graus -- usada onde seria preciso uma cor a mais, que o
+   brandbook nao permite: periodo lancado no futuro e a fatia "Outros".
+   Textura separa sem inventar identidade visual. */
+.veri-textura {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 3px,
+    rgba(255, 255, 255, 0.55) 3px,
+    rgba(255, 255, 255, 0.55) 5px
+  );
+}
+
 /* Foco visivel e dentro da paleta -- acessibilidade de teclado. */
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--color-veri-verde-escuro);

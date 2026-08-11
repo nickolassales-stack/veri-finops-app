@@ -314,7 +314,10 @@ export async function getTopServicos(
              sum(total) OVER ()  AS total_janela,
              count(*) OVER ()    AS servicos_na_janela
         FROM agregado
-       WHERE total > 0
+       -- Arredondado, e nao bruto: ha servicos com fracao de centavo
+       -- (AmazonCloudFront a 0,001181). Eles entrariam no ranking como barra
+       -- invisivel rotulada "US$ 0,00", que e ruido puro.
+       WHERE round(total, 2) > 0
     )
     SELECT * FROM com_totais
      ORDER BY total DESC, service ASC
@@ -456,7 +459,9 @@ export async function getSerieDiariaPorServico(
         FROM base GROUP BY service
     ), destaque AS (
       SELECT service, servicos_na_janela FROM ranking
-       WHERE total > 0
+       -- Mesma regra do ranking: quadro de servico que soma menos de um centavo
+       -- seria uma linha reta em zero, ocupando espaco sem informar nada.
+       WHERE round(total, 2) > 0
        ORDER BY total DESC, service ASC
        LIMIT ${pLimite}
     )
@@ -519,3 +524,4 @@ function gerarDias(de: string, ate: string): string[] {
   }
   return dias;
 }
+

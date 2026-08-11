@@ -147,6 +147,60 @@ SELECT user_id, expires_at, last_seen_at FROM app_sessions;   -- vazia após log
 Esconder o link de navegação **não** é a proteção: a autorização é aplicada por
 `requirePapel()` dentro da rota.
 
+## Dashboard executivo (`/dashboard`)
+
+Consome **os endpoints**, nunca o banco: o navegador não tem credencial de
+PostgreSQL e não teria como obtê-la. A página é um Server Component fino que só
+resolve o fuso; o carregamento acontece no cliente, o que permite trocar filtro
+sem recarregar e dar a cada bloco seu próprio estado.
+
+### Filtros globais
+
+Valem para todos os cards e gráficos, e **a URL é a única fonte de verdade** —
+link compartilhável, botão voltar funciona, recarregar não perde nada. Só o que
+foge do padrão aparece na query string (`/dashboard` limpo = mês atual, todas as
+contas).
+
+- **Período**: 7 dias, 30 dias, mês atual, mês anterior, intervalo personalizado
+- **Contas**: todas, uma ou várias — lista vinda de `cloud_accounts`, sem nenhum
+  id fixo no código
+
+Intervalo inválido é barrado **antes** de chamar a API, com mensagem sob o campo
+e `aria-invalid`. A API valida de novo — a checagem no cliente é a primeira
+barreira, não a única.
+
+### Como o painel evita mentir com número
+
+| Situação | O que a tela faz |
+|---|---|
+| Conjunto de contas muda entre os períodos | Substitui o percentual por "variação não comparável" e explica o motivo |
+| Dia sem carga do ETL | **Interrompe a linha** (lacuna), em vez de desenhar zero |
+| Conta sem carga no período | Fica **fora** do gráfico de barras e é nomeada em texto |
+| Serviço que soma menos de um centavo | Sai do ranking e da distribuição |
+| Custo lançado em data futura | Aviso no topo; o valor não entra em nenhum número |
+| Cotação indisponível | BRL vem `—`; o USD segue exato |
+
+### Hierarquia USD × BRL
+
+USD é o valor oficial: card em destaque, corpo maior, tinta forte. BRL é
+estimativa: card comum, corpo menor, tinta secundária, prefixo `~` e a palavra
+"estimativa" no rótulo. A diferença tem de ser óbvia sem ler.
+
+### Acessibilidade
+
+HTML semântico (`main`, `header`, `section`, hierarquia de títulos); filtros em
+`fieldset`/`legend` com radios e checkboxes nativos, navegáveis por setas e
+`Esc`; foco visível dentro da paleta; nenhuma informação transmitida só por cor.
+Todo gráfico de barras tem **visão de tabela** — exigência de contraste, não
+conveniência (ver [../docs/DECISOES-dataviz.md](../docs/DECISOES-dataviz.md)).
+
+### Responsividade
+
+Desktop é prioritário; notebook, tablet e mobile verificados em 1440/1280/820/390 px
+sem rolagem horizontal. Gráficos ficam em contêiner com `overflow-hidden`, para
+que a largura obsoleta do recharts durante um redimensionamento não empurre o
+layout.
+
 ## Organização
 
 ```
@@ -167,10 +221,12 @@ src/
       health/route.ts        usado pelo HEALTHCHECK do container (público)
       accounts/              cadastro de contas AWS
       dashboard/             summary, accounts, services, daily, daily-by-service
+      exchange-rate/         cotação USD/BRL
   components/
-    layout/                  header, nav, footer
+    layout/                  header (logo, usuário, sair), nav, footer
+    dashboard/               painel executivo, barra de filtros, cards de KPI
     charts/                  gráficos (tema e paleta validados)
-    ui/                      card, aviso, kpi
+    ui/                      card, aviso, kpi, estados, visão de tabela
   lib/
     auth/
       password.mjs           scrypt -- implementação única, usada pela app e pelo seed
@@ -191,6 +247,8 @@ src/
       esquemas.ts            validação Zod de tudo que chega pela URL
     queries/                 SQL por domínio
     services/                orquestra filtro + queries para os endpoints
+    dashboard/               filtros na URL (puro), cliente HTTP e hooks de dados
+    exchange-rate/           cotação USD/BRL: provedores, cache, orquestrador
     env.ts                   validação de env (lazy: o build não precisa do banco)
     format.ts                formatação pt-BR; valores em USD, sem conversão
     nav.ts                   navegação (só rotas já implementadas)

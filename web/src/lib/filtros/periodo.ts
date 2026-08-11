@@ -22,12 +22,16 @@ export const PRESETS_PERIODO = [
 
 export type PresetPeriodo = (typeof PRESETS_PERIODO)[number];
 
+/**
+ * Rotulos exibidos ao usuario -- viajam no `meta.periodo.rotulo` da API e vao
+ * direto para a tela, entao levam acentuacao correta.
+ */
 export const ROTULOS_PERIODO: Record<PresetPeriodo, string> = {
-  "7d": "Ultimos 7 dias",
-  "30d": "Ultimos 30 dias",
-  "mes-atual": "Mes atual",
-  "mes-anterior": "Mes anterior",
-  personalizado: "Periodo personalizado",
+  "7d": "Últimos 7 dias",
+  "30d": "Últimos 30 dias",
+  "mes-atual": "Mês atual",
+  "mes-anterior": "Mês anterior",
+  personalizado: "Período personalizado",
 };
 
 /** Teto de dias por consulta. Protege o Postgres compartilhado com o Metabase. */
