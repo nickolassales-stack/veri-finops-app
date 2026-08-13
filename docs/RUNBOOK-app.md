@@ -30,7 +30,7 @@ camada de visão executiva e governança.
   │ finops-portal    │───────>│ postgres:5432    │<───────│ finops-metabase  │
   │ (Next.js, :3000) │  DNS   │ (finops-postgres)│        │ (:3000 -> :3000) │
   └────────┬─────────┘        └──────────────────┘        └──────────────────┘
-           │ publicado em 127.0.0.1:8080 por padrão
+           │ publicado em 127.0.0.1:3001 por padrão
            v
      túnel SSH / Nginx+HTTPS (a definir antes de liberar a usuários)
 ```
@@ -53,9 +53,11 @@ camada de visão executiva e governança.
 |---|---|
 | `web/` | Aplicação Next.js |
 | `web/Dockerfile` | Imagem multi-stage, `output: standalone`, roda como uid 1001 (não-root) |
-| `infra/docker-compose.app.yml` | **Complementar.** Só adiciona o serviço `finops-app` |
+| `infra/docker-compose.veri-finops.yml` | **Complementar.** Só adiciona o serviço `finops-app` |
+| `infra/docker-compose.dev.yml` | Roda a imagem de produção na máquina do dev, contra um Postgres alcançável |
 | `infra/.env.example` | Modelo de variáveis. O `.env` real nunca é versionado |
 | `infra/docker-compose.current.yml` | Snapshot do compose em produção — **referência, não editar** |
+| `scripts/finops-app.sh` | Operação do container: `build`, `up`, `logs`, `health`, `status`, `rollback`, `down` |
 | `scripts/inspect-schema.sql` | Inspeção somente-leitura do schema |
 | `scripts/inspect-schema.sh` | Wrapper (SSH ou local) da inspeção |
 
@@ -193,39 +195,48 @@ chmod 600 /opt/finops/.env
 sudo vi /opt/finops/.env     # preencher APP_PG_PASSWORD e APP_BUILD_CONTEXT
 
 # 4. Subir SOMENTE o serviço novo
-#    O nome do serviço no final é obrigatório: sem ele o compose avalia todos os
-#    serviços e pode recriar o Metabase.
-docker compose \
-  -f /opt/finops/docker-compose.yml \
-  -f /opt/veri-finops/infra/docker-compose.app.yml \
-  up -d --build finops-app
+/opt/veri-finops/scripts/finops-app.sh up
+```
+
+O script embute as travas: informa sempre o nome do serviço (sem ele o compose
+avalia todos e pode recriar o Metabase), descobre o nome do projeto compose lendo
+o container do Postgres em execução (para o portal entrar na rede onde
+`postgres` resolve) e preserva a imagem em uso como `:anterior` antes de
+sobrescrevê-la. Equivalente manual:
+
+```bash
+cd /opt/finops
+docker compose -p "$(docker inspect finops-postgres \
+    --format '{{index .Config.Labels "com.docker.compose.project"}}')" \
+  -f docker-compose.yml \
+  -f /opt/veri-finops/infra/docker-compose.veri-finops.yml \
+  up -d --no-deps --build finops-app
 ```
 
 ### Validação obrigatória pós-deploy
 
 ```bash
-# a) o container novo subiu e está healthy
-docker ps --filter name=finops-portal
-docker inspect --format '{{.State.Health.Status}}' finops-portal
+# a) o portal subiu, está healthy e enxerga o banco
+scripts/finops-app.sh health
 
-# b) a aplicação responde e enxerga o banco
-curl -s http://127.0.0.1:8080/api/health | jq .
+# b) NADA foi recriado: confira o uptime dos containers existentes
+scripts/finops-app.sh status     # finops-postgres e finops-metabase devem
+                                 # manter o uptime anterior ao deploy
 
-# c) NADA foi recriado: confira o uptime dos containers existentes
-docker ps --format '{{.Names}}\t{{.Status}}'   # finops-postgres e finops-metabase
-                                               # devem manter o uptime anterior
-
-# d) o Metabase continua funcional
+# c) o Metabase continua funcional
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/api/health
 #    e abrir o dashboard "FinOps AWS - Visão Executiva" no navegador
 ```
+
+Um `Up 3 weeks` no `finops-metabase` logo depois de um deploy do portal é a
+prova de que ele não foi recriado — é o item que não pode ser pulado.
 
 ### Acessar durante a validação (sem expor a porta)
 
 ```bash
 # da estação de trabalho:
-ssh -L 8080:127.0.0.1:8080 ubuntu@<ip-da-ec2>
-# depois: http://localhost:8080
+ssh -L 3001:127.0.0.1:3001 ubuntu@<ip-da-ec2>
+# depois: http://localhost:3001
 ```
 
 Só troque `APP_BIND` para `0.0.0.0` **depois** de colocar Nginx + HTTPS na frente
@@ -236,22 +247,26 @@ e restringir o Security Group — a mesma recomendação já registrada para a p
 
 ## 7. Rollback
 
-O serviço é isolado: remover a aplicação não toca em mais nada.
+Dois cenários diferentes.
+
+**A versão nova subiu, mas está ruim** — volte para a imagem anterior:
 
 ```bash
-docker compose \
-  -f /opt/finops/docker-compose.yml \
-  -f /opt/veri-finops/infra/docker-compose.app.yml \
-  stop finops-app
-
-docker compose \
-  -f /opt/finops/docker-compose.yml \
-  -f /opt/veri-finops/infra/docker-compose.app.yml \
-  rm -f finops-app
+scripts/finops-app.sh rollback
 ```
 
-Postgres, Metabase, volumes e dados permanecem intactos. Nenhum `down`, nenhum
-`--volumes`, nenhum `--force-recreate` em serviço existente.
+Sobe `finops-portal:anterior` **sem rebuild**: o objetivo é voltar ao binário que
+funcionava, não reconstruir a partir de um código que pode ter mudado no disco.
+O `build` guarda essa tag automaticamente antes de sobrescrever a corrente.
+
+**Tirar o portal do ar** — o serviço é isolado, remover não toca em mais nada:
+
+```bash
+scripts/finops-app.sh down
+```
+
+Postgres, Metabase, volumes e dados permanecem intactos. Nenhum `down` de
+projeto, nenhum `--volumes`, nenhum `--force-recreate` em serviço existente.
 
 ---
 
@@ -308,7 +323,7 @@ Tokens em `web/src/app/globals.css`, derivados de `docs/skill-veri.md`
 |---|---|
 | ETL é manual (`athena_to_postgres.py`) | A aplicação exibe o dado que existe no banco; a tela precisa indicar o frescor. Automação do ETL segue pendente (já registrada na doc original) |
 | `postgres` não tem healthcheck no compose | `depends_on` só garante ordem de start, não prontidão. A aplicação tolera: erro de conexão vira mensagem na tela, não crash |
-| Porta 3000 já é do Metabase | A aplicação usa 8080 no host (3000 apenas dentro do container) |
+| Porta 3000 já é do Metabase | A aplicação usa 3001 no host (3000 apenas dentro do container). O `.env.example` avisa explicitamente para não trocar para 3000 |
 | Senhas em texto claro no `docker-compose.yml` atual e nos `.docx` | Fora do escopo deste serviço, mas recomendada rotação e migração para `.env` em etapa própria |
 | Valor oficial é em USD; BRL é estimativa | A conversão usa a PTAX do Banco Central e é **indicativa** — não considera spread nem IOF, e nada em BRL é gravado no banco. Telas e arquivos exportados marcam isso explicitamente |
 | Exportação consome memória proporcional à BASE, não à tela | Único ponto do portal com esse comportamento. `EXPORT_MAX_ROWS` (padrão 50.000) é conferido antes de gerar e recusa com HTTP 413 acima do teto. O CSV vai em streaming; quem o teto protege é o XLSX. Se subir o teto, suba `APP_MEM_LIMIT` junto |

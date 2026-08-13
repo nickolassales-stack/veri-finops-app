@@ -27,6 +27,20 @@ npm run dev                        # http://localhost:3000
 
 `.env.local` está no `.gitignore`. Nunca comitar credencial.
 
+### Rodar em Docker, com a imagem que vai para a EC2
+
+Para conferir o artefato antes de publicar — o `npm run dev` não prova que a
+imagem funciona:
+
+```bash
+# na raiz do repositório, com o túnel SSH ativo
+docker compose -f infra/docker-compose.dev.yml up -d --build
+curl http://127.0.0.1:3001/api/health
+docker compose -f infra/docker-compose.dev.yml down
+```
+
+Arquitetura, variáveis, deploy e rollback: **[README da raiz](../README.md)**.
+
 ## Comandos
 
 | Comando | O que faz |

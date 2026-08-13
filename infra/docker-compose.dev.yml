@@ -1,0 +1,90 @@
+# =============================================================================
+# Portal FinOps VERI -- execucao LOCAL em Docker
+# -----------------------------------------------------------------------------
+# Para que serve: rodar a MESMA imagem que vai para a EC2, na sua maquina, antes
+# de publicar. Nao e o laco de desenvolvimento -- para escrever codigo use
+# `npm run dev` no diretorio web/, que tem Fast Refresh. Este arquivo serve para
+# a pergunta "o que eu vou publicar realmente funciona?", que so a imagem
+# responde.
+#
+# NAO sobe PostgreSQL. E deliberado: as tabelas de custo pertencem ao ETL, e
+# escrever aqui um CREATE TABLE paralelo criaria um schema que diverge do real
+# sem ninguem perceber. Aponte para um Postgres que ja exista.
+#
+#   1. Tunel SSH para a EC2 (leitura do banco real):
+#        ssh -i chave.pem -N -L 5432:localhost:5432 ec2-user@HOST
+#      e deixe PG_HOST no padrao (host.docker.internal).
+#
+#   2. Ou um Postgres seu, em outro container/maquina: ajuste PG_HOST/PG_PORT.
+#
+# Uso:
+#   docker compose -f infra/docker-compose.dev.yml up -d --build
+#   curl http://127.0.0.1:3001/api/health
+#   docker compose -f infra/docker-compose.dev.yml down
+#
+# As variaveis vem de um `.env` NO MESMO DIRETORIO de onde o comando roda (a
+# raiz do repositorio), ou do ambiente. Ver infra/.env.example.
+# =============================================================================
+
+services:
+  finops-app-dev:
+    image: finops-portal:${APP_IMAGE_TAG:-dev}
+    build:
+      # Relativo a ESTE arquivo: rodando da raiz do repositorio, resolve web/.
+      context: ../web
+      dockerfile: Dockerfile
+    container_name: finops-portal-dev
+    restart: "no"
+
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      TZ: ${APP_TZ:-America/Sao_Paulo}
+
+      # `host.docker.internal` e o host que roda o Docker -- e onde o tunel SSH
+      # esta escutando. Dentro do container, `localhost` seria o proprio
+      # container e a conexao morreria em ECONNREFUSED.
+      PG_HOST: ${PG_HOST:-host.docker.internal}
+      PG_PORT: ${PG_PORT:-5432}
+      PG_DB: ${PG_DB:-finops}
+      PG_USER: ${PG_USER:?defina PG_USER no .env ou no ambiente}
+      PG_PASSWORD: ${PG_PASSWORD:?defina PG_PASSWORD no .env ou no ambiente}
+      PG_POOL_MAX: ${PG_POOL_MAX:-5}
+      PG_STATEMENT_TIMEOUT_MS: ${PG_STATEMENT_TIMEOUT_MS:-15000}
+      APP_TZ: ${APP_TZ:-America/Sao_Paulo}
+
+      AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-12}
+      # `false` APENAS aqui: sem HTTPS local, um cookie Secure nao seria aceito
+      # em http://127.0.0.1 por parte dos navegadores e o login nao fecharia.
+      # Em producao continua `true`.
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+
+      EXCHANGE_RATE_PROVIDER: ${EXCHANGE_RATE_PROVIDER:-ptax}
+      EXCHANGE_RATE_CACHE_TTL_SECONDS: ${EXCHANGE_RATE_CACHE_TTL_SECONDS:-3600}
+      EXCHANGE_RATE_TIMEOUT_MS: ${EXCHANGE_RATE_TIMEOUT_MS:-4000}
+      EXPORT_MAX_ROWS: ${EXPORT_MAX_ROWS:-50000}
+
+    # Mesma porta da producao (3001), para o roteiro de teste ser o mesmo.
+    ports:
+      - "127.0.0.1:${APP_PORT:-3001}:3000"
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    # Resolve `host.docker.internal` tambem no Docker Engine do Linux, onde ele
+    # nao existe por padrao (no Docker Desktop ja funciona sem isto).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777

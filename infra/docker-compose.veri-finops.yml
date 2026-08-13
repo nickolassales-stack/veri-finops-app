@@ -1,0 +1,122 @@
+# =============================================================================
+# Portal FinOps VERI -- arquivo COMPLEMENTAR de docker compose
+# -----------------------------------------------------------------------------
+# Este arquivo NAO substitui nem altera o docker-compose.yml em producao.
+# Ele apenas ADICIONA o servico `finops-app`. Os servicos existentes (postgres e
+# metabase) NAO sao redeclarados aqui de proposito: o que nao esta escrito nao
+# pode ser recriado, reconfigurado nem removido por engano.
+#
+# Uso na EC2 FinOps (a partir do diretorio do compose atual, ex. /opt/finops):
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f /opt/veri-finops/infra/docker-compose.veri-finops.yml \
+#     up -d --build finops-app
+#
+# Ou, mais simples, pelo script que ja embute os caminhos e as travas:
+#
+#   scripts/finops-app.sh up
+#
+# INFORMAR O NOME DO SERVICO NO FINAL E OBRIGATORIO. Sem ele o compose avalia
+# todos os servicos do projeto e pode recriar o Metabase.
+#
+# ATENCAO -- caminhos relativos: com varios `-f`, o compose resolve caminhos
+# relativos a partir do diretorio do PRIMEIRO arquivo. Por isso o contexto de
+# build vem de APP_BUILD_CONTEXT, sempre absoluto.
+#
+# ATENCAO -- nome do projeto: os dois arquivos precisam ser carregados no MESMO
+# projeto compose (mesmo `-p`, ou nenhum nos dois). E isso que coloca o portal na
+# mesma rede do `postgres` e faz o nome `postgres` resolver. Rodar este arquivo
+# sozinho cria outro projeto, outra rede, e a aplicacao nao acha o banco.
+#
+# Variaveis: copie infra/.env.example para `.env` ao lado do docker-compose.yml
+# usado no deploy. O `.env` nunca vai para o git.
+# =============================================================================
+
+services:
+  finops-app:
+    image: finops-portal:${APP_IMAGE_TAG:-local}
+    build:
+      context: ${APP_BUILD_CONTEXT:?defina APP_BUILD_CONTEXT com o caminho absoluto do diretorio web/ do repositorio}
+      dockerfile: Dockerfile
+    container_name: finops-portal
+
+    # Volta sozinho depois de reboot da EC2 ou crash, mas NAO fica em laco
+    # infinito se o operador parar o container de proposito (`docker stop`).
+    restart: unless-stopped
+
+    depends_on:
+      - postgres
+
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      TZ: ${APP_TZ:-America/Sao_Paulo}
+
+      # Fala com o Postgres pela REDE INTERNA do compose, pelo nome do servico.
+      # A porta 5432 continua publicada apenas em 127.0.0.1 pelo compose
+      # original -- este arquivo nao publica porta de banco nenhuma.
+      PG_HOST: ${APP_PG_HOST:-postgres}
+      PG_PORT: "5432"
+      PG_DB: ${PG_DB:-finops}
+      PG_USER: ${APP_PG_USER:?defina APP_PG_USER no .env}
+      PG_PASSWORD: ${APP_PG_PASSWORD:?defina APP_PG_PASSWORD no .env}
+      PG_POOL_MAX: ${APP_PG_POOL_MAX:-5}
+      PG_STATEMENT_TIMEOUT_MS: ${APP_PG_STATEMENT_TIMEOUT_MS:-15000}
+      APP_TZ: ${APP_TZ:-America/Sao_Paulo}
+
+      # Autenticacao. AUTH_COOKIE_SECURE deve permanecer true; ver .env.example.
+      AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-12}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+
+      # Cotacao USD/BRL (estimativa visual). Unica chamada externa da aplicacao:
+      # HTTPS para o Banco Central. Use `nenhum` se a saida for bloqueada -- o
+      # portal continua funcionando, exibindo apenas USD.
+      EXCHANGE_RATE_PROVIDER: ${EXCHANGE_RATE_PROVIDER:-ptax}
+      EXCHANGE_RATE_CACHE_TTL_SECONDS: ${EXCHANGE_RATE_CACHE_TTL_SECONDS:-3600}
+      EXCHANGE_RATE_TIMEOUT_MS: ${EXCHANGE_RATE_TIMEOUT_MS:-4000}
+
+      # Teto de linhas por exportacao. Protege a memoria do container: acima
+      # dele a exportacao e recusada, nunca truncada. Ver infra/.env.example.
+      EXPORT_MAX_ROWS: ${EXPORT_MAX_ROWS:-50000}
+
+    # 3001 no host, porque 3000 e do Metabase. O padrao publica SOMENTE no
+    # loopback da EC2: para validar, use tunel SSH. Para liberar a usuarios de
+    # gestao, coloque Nginx + HTTPS na frente e so entao troque APP_BIND --
+    # trocar sozinho expoe login e dado financeiro em HTTP aberto.
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3001}:3000"
+
+    # Mesma checagem da imagem, declarada aqui tambem porque e o compose que o
+    # operador le e ajusta. `/api/health` responde 503 quando o Postgres nao
+    # responde, entao "healthy" significa "serve dado", nao apenas "subiu".
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+
+    # A EC2 tem ~4 GiB e o Metabase (JVM) ja sofreu OOM nesta instancia.
+    # O teto evita que o portal cause regressao no Metabase.
+    mem_limit: ${APP_MEM_LIMIT:-512m}
+
+    # ---------------------------------------------------------- endurecimento
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # A aplicacao nao escreve em disco: o Next roda em `output: standalone`, sem
+    # ISR, e nao ha upload. Se um dia precisar escrever, o container falha alto
+    # em vez de gravar em lugar nenhum silenciosamente.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
