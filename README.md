@@ -400,9 +400,26 @@ unset PG_PASSWORD
 ```
 
 `--realinhar-mes` corrige `aws_monthly_costs.month` onde ele aponta para o mês
-errado. Sem isso, a próxima carga mensal insere uma linha nova no mês certo e
-mantém a antiga no errado — o mesmo valor contado duas vezes. Nenhum valor de
-custo é alterado; só a atribuição de mês, que é regerável a partir do CUR.
+errado. Nenhum valor de custo é alterado; só a atribuição de mês, que é
+regerável a partir do CUR.
+
+**Os passos 2 e 3 são indivisíveis.** Cada um sozinho produz a duplicação que os
+dois juntos evitam:
+
+- Realinhar sem trocar o ETL: o ETL antigo deriva o mês da data de uso, não acha
+  a linha realinhada, e **insere outra** no mês antigo.
+- Trocar o ETL sem realinhar: o ETL novo insere no mês de cobrança e a linha
+  antiga permanece no mês de uso.
+
+Em qualquer das duas ordens incompletas o mesmo valor passa a ser contado duas
+vezes na tabela mensal. Se precisar parar no meio, pare **antes** do passo 2:
+preencher só as colunas do diário — que é a única tabela que o portal lê — é
+seguro e já faz o portal bater com o Cost Explorer.
+
+Rode sempre a simulação antes. Ela confere que cada linha do banco casa com no
+máximo uma do CUR e **aborta** se a chave for ambígua, em vez de deixar a última
+iteração do laço vencer no sorteio. O número de linhas atualizadas nunca deve
+passar o tamanho da tabela; se passar, a chave está errada.
 
 O script existe por um motivo: **todo comando termina com o nome do serviço**.
 Sem esse nome, o `docker compose` avalia todos os serviços do projeto e pode
@@ -579,6 +596,7 @@ caminho que possa divergir.
 | Login não fecha; volta para `/login` | `AUTH_COOKIE_SECURE=true` sem HTTPS e sem ser localhost | Acesse por túnel SSH, ou ponha HTTPS na frente. **Não** desligue o `Secure` em produção |
 | `/api/health` responde só `{"ok":…}` | Comportamento correto: o detalhe (versão, banco, erro) só sai com sessão | Para diagnosticar, veja `docker logs finops-portal` — o erro do driver é registrado lá |
 | `column "billing_month" does not exist` | O portal subiu **antes** da migração 001 | Rode a migração e reinicie. Ver seção 8, passo 5 |
+| As telas seguem em erro 500 **depois** de aplicar a migração | Processo antigo servindo código já compilado — vale para `next dev` e para o container | Reinicie o processo. Confirme com `curl` num endpoint: se a API responde 200 e a tela não, o que está velho é o navegador ou o servidor, não o banco |
 | O total continua sem bater com o Cost Explorer | Migração aplicada, mas o backfill não rodou | `scripts/backfill-billing-period.py --aplicar --realinhar-mes`. A consulta 5 do script de reconciliação mostra a cobertura |
 | O mesmo valor aparece duas vezes na tabela mensal | Backfill rodou sem `--realinhar-mes` | Reexecute com a opção. A carga mensal insere no mês certo e a linha antiga fica no errado |
 | Tela em branco / erro 500 nas telas de dado | Banco fora, ou schema diferente do esperado | `curl localhost:3001/api/health`; `/diagnostico` (ADMIN) mostra a última carga do ETL |

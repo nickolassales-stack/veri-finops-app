@@ -112,15 +112,42 @@ FROM finops.cur_raw
 GROUP BY 1,2,3,4,5,6
 """
 
+# O `usage_month` NAO e enfeite: ele e a chave de casamento.
+#
+# `aws_monthly_costs.month` foi gravada pelo ETL antigo como o mes de USO, e o
+# indice unico da tabela e (month, account_id, service). Sem o mes no WHERE, um
+# servico presente em julho E agosto casa com as duas linhas e cada iteracao
+# sobrescreve a anterior -- a ultima do laco vence, arbitrariamente. Foi
+# exatamente esse defeito que a simulacao pegou em 13/08/2026, quando o script
+# relatou 78 atualizacoes numa tabela de 50 linhas.
 CONSULTA_MENSAL = """
 SELECT
+  CAST(date_trunc('month', line_item_usage_start_date) AS date) AS usage_month,
   line_item_usage_account_id AS account_id,
   line_item_product_code AS service,
   billing_period,
   CAST(bill_billing_period_start_date AS date) AS billing_month
 FROM finops.cur_raw
-GROUP BY 1,2,3,4
+GROUP BY 1,2,3,4,5
 """
+
+
+def conferir_chave_unica(df: pd.DataFrame, chave: list[str], nome: str) -> None:
+    """Recusa-se a prosseguir se a chave de casamento nao for unica no CUR.
+
+    Cada linha do CUR vira um UPDATE. Se duas linhas diferentes casarem com a
+    MESMA linha do Postgres, a segunda sobrescreve a primeira e o resultado
+    depende da ordem do laco -- silenciosamente. Uma tabela financeira nao pode
+    ser preenchida por sorteio, entao aqui o script para em vez de adivinhar.
+    """
+    repetidas = df[df.duplicated(subset=chave, keep=False)]
+    if repetidas.empty:
+        return
+    print(f"\nABORTADO: em {nome}, a chave {chave} nao identifica um unico")
+    print("periodo de cobranca. As linhas abaixo competem pela mesma linha do banco:\n")
+    print(repetidas.sort_values(chave).to_string(index=False))
+    print("\nNada foi gravado. Resolva a ambiguidade antes de repetir.")
+    raise SystemExit(2)
 
 
 def main() -> int:
@@ -137,7 +164,15 @@ def main() -> int:
     print("lendo o CUR no Athena...")
     diario = run_athena_query(CONSULTA_DIARIA)
     mensal = run_athena_query(CONSULTA_MENSAL)
-    print(f"  {len(diario)} chaves diarias, {len(mensal)} chaves mensais\n")
+    print(f"  {len(diario)} chaves diarias, {len(mensal)} chaves mensais")
+
+    conferir_chave_unica(
+        diario, ["usage_date", "account_id", "service", "region"], "aws_daily_costs"
+    )
+    conferir_chave_unica(
+        mensal, ["usage_month", "account_id", "service"], "aws_monthly_costs"
+    )
+    print("  chaves conferidas: cada linha do banco casa com no maximo 1 do CUR\n")
 
     conn = psycopg2.connect(
         host=PG_HOST, port=PG_PORT, dbname=PG_DB, user=PG_USER, password=PG_PASSWORD
@@ -178,14 +213,15 @@ def main() -> int:
                         UPDATE aws_monthly_costs
                            SET billing_period = %s,
                                billing_month  = %s
-                         WHERE account_id = %s
+                         WHERE month      = %s
+                           AND account_id = %s
                            AND service    = %s
                            AND (billing_period IS DISTINCT FROM %s
                                 OR billing_month IS DISTINCT FROM %s)
                         """,
                         (
                             str(r["billing_period"]), r["billing_month"],
-                            str(r["account_id"]), str(r["service"]),
+                            r["usage_month"], str(r["account_id"]), str(r["service"]),
                             str(r["billing_period"]), r["billing_month"],
                         ),
                     )
