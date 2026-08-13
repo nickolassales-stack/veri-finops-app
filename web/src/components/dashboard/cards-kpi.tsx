@@ -86,12 +86,20 @@ export function CardsKpi({
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {/* ---------------------------------------------------- custo oficial */}
-      <Cartao rotulo="Custo total do período" destaque>
+      {/*
+        O rotulo diz "de cobranca", e nao so "do periodo", porque e essa palavra
+        que torna o numero conferivel: e o total da FATURA da AWS no periodo, o
+        mesmo criterio do Cost Explorer. O grafico diario logo abaixo usa a data
+        de USO e pode somar diferente -- sem o rotulo, a diferenca pareceria
+        erro de conta.
+      */}
+      <Cartao rotulo="Custo total do período de cobrança" destaque>
         <p className="veri-numero veri-display mt-2 text-4xl text-veri-verde-escuro">
           {formatUSD(resumo.total)}
         </p>
         <p className="mt-2 text-xs leading-relaxed text-texto-suave">
-          Valor oficial, em dólar, como a AWS fatura.{" "}
+          Valor oficial, em dólar, como a AWS fatura — mesmo critério do AWS Cost
+          Explorer.{" "}
           {resumo.diasComDado > 0 ? (
             <>
               Média de{" "}

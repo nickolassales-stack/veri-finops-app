@@ -5,7 +5,13 @@ import type { Direcao } from "@/lib/filtros/esquemas";
 import { hojeEm, type ContextoTemporal } from "@/lib/filtros/periodo";
 import { toNumber } from "@/lib/format";
 
-import { condicoesDeCorte, janelas, juntarE, type FiltroCusto } from "./filtros-sql";
+import {
+  condicaoDeslocada,
+  condicoesDeCorte,
+  janelas,
+  juntarE,
+  type FiltroCusto,
+} from "./filtros-sql";
 
 /**
  * Queries do dashboard. Validadas contra o banco real em 06/08/2026 --
@@ -16,6 +22,21 @@ import { condicoesDeCorte, janelas, juntarE, type FiltroCusto } from "./filtros-
  * "01 a 05 de agosto" nela seria impossivel. Os dois totais conferem
  * (agosto: 42,61 no diario e 42,61 no mensal), entao nao ha perda de
  * fidelidade em usar o diario para tudo.
+ *
+ * DOIS CRITERIOS DE DATA, e a escolha e deliberada em cada consulta:
+ *
+ *   getResumo, getCustoPorConta, getTopServicos  -> `cobranca`
+ *       Numeros financeiros. Seguem a fatura da AWS e por isso reconciliam com
+ *       o Cost Explorer.
+ *
+ *   getSerieDiaria, getSerieDiariaPorServico     -> `uso`
+ *       Numeros operacionais. Seguem o dia em que o recurso rodou, que e a
+ *       unica pergunta que um grafico diario responde.
+ *
+ * Os dois PODEM divergir na mesma janela, e isso nao e defeito. Em 13/08/2026,
+ * julho fechava US$ 348,73 por cobranca e US$ 311,41 por uso: a diferenca era
+ * um registro de dominio cobrado em julho com data de uso em 04/09. O resumo
+ * devolve `custoDeslocado` justamente para a tela poder explicar isso.
  *
  * Toda agregacao acontece no Postgres. O que trafega para o Node ja e o
  * resultado somado -- nunca o historico bruto.
@@ -64,11 +85,22 @@ export type Resumo = {
   ultimoDiaComDado: string | null;
   /** Media por dia COM dado -- nao por dia da janela, que diluiria o valor. */
   mediaDiaria: number;
+  /**
+   * Parte do `total` que vem de cobranca DESLOCADA: a AWS faturou no periodo
+   * selecionado, mas a data de uso cai em outro mes.
+   *
+   * Zero na quase totalidade dos casos. Quando nao e zero, e a explicacao exata
+   * de por que o total financeiro nao bate com a soma do grafico diario -- e a
+   * tela precisa dizer isso, senao a diferenca parece erro de conta.
+   */
+  custoDeslocado: number;
+  /** Quantas linhas deslocadas compoem `custoDeslocado`. */
+  linhasDeslocadas: number;
 };
 
 export async function getResumo(filtro: FiltroCusto): Promise<Resumo> {
   const p = new ConstrutorParams();
-  const j = janelas(p, filtro);
+  const j = janelas(p, filtro, "d", "cobranca");
   const corte = condicoesDeCorte(p, filtro);
 
   const linha = await queryOne<{
@@ -82,16 +114,25 @@ export async function getResumo(filtro: FiltroCusto): Promise<Resumo> {
     ultimo_dia: string | null;
     mesmas_contas: boolean | null;
     contas_ativas: string;
+    custo_deslocado: string;
+    linhas_deslocadas: string;
   }>(
     `
     WITH base AS (
-      SELECT d.usage_date, d.account_id, d.service, d.cost_amount
+      -- billing_month precisa ser projetada aqui: as condicoes de janela
+      -- referenciam a coluna, e o SELECT de fora enxerga apenas esta CTE.
+      SELECT d.usage_date, d.billing_month, d.account_id, d.service, d.cost_amount
         FROM aws_daily_costs d
        WHERE ${j.qualquerUmaDasDuas}
          AND ${juntarE(corte)}
     )
     SELECT
       coalesce(sum(cost_amount) FILTER (WHERE ${j.atual}), 0)    AS total,
+      -- Quanto do total veio de cobranca com data de uso em outro mes.
+      coalesce(sum(cost_amount) FILTER (
+        WHERE ${j.atual} AND ${condicaoDeslocada("d")}), 0)      AS custo_deslocado,
+      count(*) FILTER (
+        WHERE ${j.atual} AND ${condicaoDeslocada("d")})          AS linhas_deslocadas,
       coalesce(sum(cost_amount) FILTER (WHERE ${j.anterior}), 0) AS total_anterior,
       count(DISTINCT account_id) FILTER (WHERE ${j.atual})    AS contas,
       count(DISTINCT account_id) FILTER (WHERE ${j.anterior}) AS contas_anterior,
@@ -129,6 +170,8 @@ export async function getResumo(filtro: FiltroCusto): Promise<Resumo> {
     primeiroDiaComDado: linha.primeiro_dia,
     ultimoDiaComDado: linha.ultimo_dia,
     mediaDiaria: diasComDado > 0 ? total / diasComDado : 0,
+    custoDeslocado: toNumber(linha.custo_deslocado),
+    linhasDeslocadas: Number(linha.linhas_deslocadas),
   };
 }
 
@@ -188,7 +231,7 @@ export async function getCustoPorConta(
   const direcao = opcoes.direcao === "asc" ? "ASC" : "DESC";
 
   const p = new ConstrutorParams();
-  const j = janelas(p, filtro);
+  const j = janelas(p, filtro, "d", "cobranca");
   const corte = condicoesDeCorte(p, filtro);
   const limite = p.add(opcoes.tamanho);
   const deslocamento = p.add((opcoes.pagina - 1) * opcoes.tamanho);
@@ -289,7 +332,7 @@ export async function getTopServicos(
   limite: number,
 ): Promise<TopServicos> {
   const p = new ConstrutorParams();
-  const j = janelas(p, filtro);
+  const j = janelas(p, filtro, "d", "cobranca");
   const corte = condicoesDeCorte(p, filtro);
   const pLimite = p.add(limite);
 

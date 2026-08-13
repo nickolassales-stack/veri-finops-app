@@ -123,8 +123,23 @@ export function TabelaAnalitica({
               key={linha.id}
               className="border-b border-veri-offwhite/60 last:border-0"
             >
+              {/*
+                O periodo de cobranca aparece SO quando difere do mes da data de
+                uso. Repeti-lo em toda linha seria ruido em 99% dos casos --
+                marca-lo apenas onde ha divergencia poe o olho exatamente na
+                linha que precisa de explicacao: e ela que faz o total do filtro
+                nao bater com a soma das datas.
+              */}
               <td className="veri-numero py-2 pr-4 whitespace-nowrap">
                 {formatDataDia(linha.usageDate)}
+                {linha.billingPeriod !== linha.usageDate.slice(0, 7) && (
+                  <span
+                    className="block text-xs text-texto-suave"
+                    title="A AWS faturou este lançamento em outro período. O filtro segue o período de cobrança, como o Cost Explorer."
+                  >
+                    cobrado em {linha.billingPeriod}
+                  </span>
+                )}
               </td>
 
               <td className="py-2 pr-4">

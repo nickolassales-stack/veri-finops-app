@@ -58,6 +58,16 @@ const CASAS_COTACAO = 4;
 
 export const COLUNAS_EXPORTACAO: ColunaExportacao[] = [
   {
+    // PRIMEIRA coluna, antes da data de uso, porque e o criterio que define
+    // quais linhas estao no arquivo. Sem ela, uma exportacao de julho traria
+    // uma linha com data de uso 04/09 e nada explicaria por que ela esta ali.
+    titulo: "Período de cobrança",
+    largura: 18,
+    // Texto, e nao data: "2026-07" nao e um dia. Como data, o Excel inventaria
+    // um dia 1 e a coluna passaria a mentir sobre a granularidade do dado.
+    ler: (l) => ({ tipo: "texto", valor: l.billingPeriod }),
+  },
+  {
     titulo: "Data de uso",
     largura: 12,
     ler: (l) => ({ tipo: "data", valor: l.usageDate }),

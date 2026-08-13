@@ -20,7 +20,13 @@ import type { Cotacao, MetaResposta } from "./tipos";
 
 export type LinhaAnalitica = {
   id: string;
+  /** Data de USO, "AAAA-MM-DD". Pode cair fora do periodo de cobranca. */
   usageDate: string;
+  /**
+   * Periodo de COBRANCA, "AAAA-MM" -- a fatura da AWS a que o lancamento
+   * pertence, e o criterio que filtra esta tela.
+   */
+  billingPeriod: string;
   accountId: string;
   accountName: string | null;
   service: string;

@@ -14,7 +14,7 @@ substituir nem alterar nenhum dos dois.
 |---|---|
 | [web/](web/) | Aplicação Next.js 16 + TypeScript. **[README da aplicação](web/README.md)** — autenticação, telas, API, exportação e convenções |
 | [infra/](infra/) | Composes de produção e de desenvolvimento, e o `.env.example` |
-| [scripts/](scripts/) | Operação do container, inspeção do schema, criação do role e das tabelas de auth |
+| [scripts/](scripts/) | Operação do container, migrações, ETL, inspeção do schema, criação do role e das tabelas de auth |
 | [docs/](docs/) | Runbook, schema real do banco, decisões de visualização, brandbook VERI |
 | [assets/logos/](assets/logos/) | Identidade visual VERI |
 
@@ -23,6 +23,15 @@ substituir nem alterar nenhum dos dois.
 - **[docs/API-dados.md](docs/API-dados.md)** — endpoints, filtros e contrato de resposta
 - **[docs/DECISOES-dataviz.md](docs/DECISOES-dataviz.md)** — paleta validada e regras de gráfico
 - **[docs/skill-veri.md](docs/skill-veri.md)** — Brandbook VERI v2.0
+
+Banco e carga:
+
+| Arquivo | Papel |
+|---|---|
+| [scripts/migrations/001-billing-period.sql](scripts/migrations/001-billing-period.sql) | Separa período financeiro de data de uso. **Reversível** ([rollback](scripts/migrations/001-billing-period-rollback.sql)) |
+| [scripts/etl/athena_to_postgres.py](scripts/etl/athena_to_postgres.py) | Carga Athena → PostgreSQL. Roda na EC2, em `/opt/finops/etl/` |
+| [scripts/backfill-billing-period.py](scripts/backfill-billing-period.py) | Preenche o período de cobrança nas linhas já carregadas |
+| [scripts/reconciliacao-cost-explorer.sql](scripts/reconciliacao-cost-explorer.sql) | Confere o portal contra o AWS Cost Explorer |
 
 ---
 
@@ -130,6 +139,47 @@ AWS Cost Explorer / CUR
 do código: o role `finops_app` tem **`SELECT` e nada mais** em `aws_daily_costs`
 e `aws_monthly_costs` — a barreira é do banco
 (ver [scripts/create-app-role.sql](scripts/create-app-role.sql)).
+
+### Duas datas, duas perguntas diferentes
+
+O CUR da AWS traz **duas** datas para o mesmo lançamento, e confundi-las foi a
+causa de o portal não bater com o Cost Explorer:
+
+| Campo no CUR | Coluna no Postgres | Responde |
+|---|---|---|
+| `line_item_usage_start_date` | `usage_date` | **Quando o recurso rodou.** Visão operacional |
+| `bill_billing_period_start_date` | `billing_month` | **Em que fatura a AWS cobrou.** Visão financeira |
+| `billing_period` (partição) | `billing_period` | O mesmo, no formato `AAAA-MM` |
+
+Na maioria dos lançamentos as duas caem no mesmo mês. Em **cobrança pontual** —
+registro de domínio, taxa anual, reserva — não caem. Caso real medido em
+13/08/2026 na conta piloto:
+
+```
+billing_period 2026-07  ·  usage_date 2026-09-04  ·  AmazonRegistrar  ·  US$ 37,32
+```
+
+O ETL antigo só gravava a data de uso, então julho fechava **US$ 311,41** no
+portal e **US$ 348,73** no Cost Explorer. A diferença era exatamente essa linha,
+empurrada para setembro.
+
+**Quem usa o quê, hoje:**
+
+| Consulta | Critério | Por quê |
+|---|---|---|
+| Custo total do período de cobrança | `billing_period` | É o número que reconcilia com o Cost Explorer |
+| Custo por conta · Top serviços · Distribuição % | `billing_period` | Precisam somar o mesmo que o card |
+| Comparação com o período anterior | `billing_period` | Comparar fatura com fatura |
+| Analítico e exportações | `billing_period` | É o detalhe dos cards; se divergisse, a conferência linha a linha não fecharia |
+| **Evolução diária** (os dois gráficos) | `usage_date` | Um gráfico diário responde "em que dia rodou" — só a data de uso responde isso |
+
+Uma linha **deslocada** (cobrança num mês, uso em outro) é atribuída **apenas**
+ao seu período de cobrança, nunca aos dois. Por isso somar todos os períodos
+devolve o total exato da base: nada é contado em dobro, nada some.
+
+Onde `billing_month` ainda é `NULL` (linha carregada antes da migração 001), as
+consultas caem em `date_trunc('month', usage_date)` — ou seja, no critério
+antigo. Não existe estado intermediário inconsistente.
 
 | Tabela | O portal faz |
 |---|---|
@@ -303,15 +353,56 @@ docker exec -i finops-postgres \
   psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
   < /opt/veri-finops/scripts/create-auth-tables.sql
 
-# 5. variáveis
+# 5. período financeiro (migração 001) -- OBRIGATÓRIA ANTES DE SUBIR O PORTAL
+docker exec -i finops-postgres \
+  psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
+  < /opt/veri-finops/scripts/migrations/001-billing-period.sql
+
+# 6. variáveis
 cp /opt/veri-finops/infra/.env.example /opt/finops/.env
 chmod 600 /opt/finops/.env
 sudo vi /opt/finops/.env        # APP_BUILD_CONTEXT, APP_PG_USER, APP_PG_PASSWORD
 unset APP_PG_PASSWORD
 
-# 6. subir SOMENTE o portal
+# 7. subir SOMENTE o portal
 /opt/veri-finops/scripts/finops-app.sh up
 ```
+
+> **A ordem do passo 5 não é negociável.** As consultas executivas referenciam
+> `billing_period` e `billing_month`. Subir o portal antes da migração faz toda
+> tela de custo falhar com `column "billing_month" does not exist`. O inverso é
+> seguro: com a migração aplicada e as colunas ainda vazias, o portal se comporta
+> exatamente como a versão anterior.
+
+### Passar a bater com o Cost Explorer
+
+A migração só cria as colunas — elas nascem vazias. Quem sabe o período de
+cobrança de cada linha é o CUR, então o preenchimento vem de lá:
+
+```bash
+cd /opt/finops && source venv/bin/activate
+export AWS_REGION=us-east-2 FINOPS_BUCKET=finops-aws-cost-datalake-800168045394
+export PG_HOST=127.0.0.1 PG_PORT=5432 PG_DB=finops PG_USER=finops_user
+read -rsp 'senha do postgres: ' PG_PASSWORD; export PG_PASSWORD; echo
+
+# 1. simula e mostra o que faria
+python /opt/veri-finops/scripts/backfill-billing-period.py
+
+# 2. aplica
+python /opt/veri-finops/scripts/backfill-billing-period.py --aplicar --realinhar-mes
+
+# 3. ETL novo, para as próximas cargas já nascerem corretas
+cp /opt/finops/etl/athena_to_postgres.py \
+   /opt/finops/etl/athena_to_postgres.py.bak-$(date +%F-%H%M)
+cp /opt/veri-finops/scripts/etl/athena_to_postgres.py /opt/finops/etl/
+
+unset PG_PASSWORD
+```
+
+`--realinhar-mes` corrige `aws_monthly_costs.month` onde ele aponta para o mês
+errado. Sem isso, a próxima carga mensal insere uma linha nova no mês certo e
+mantém a antiga no errado — o mesmo valor contado duas vezes. Nenhum valor de
+custo é alterado; só a atribuição de mês, que é regerável a partir do CUR.
 
 O script existe por um motivo: **todo comando termina com o nome do serviço**.
 Sem esse nome, o `docker compose` avalia todos os serviços do projeto e pode
@@ -417,13 +508,28 @@ Depois de subir, com sessão aberta em `/dashboard`:
 | 8 | **Cotação** | O card mostra valor, data de referência e fonte (PTAX) |
 | 9 | **Fallback da cotação** | Com `EXCHANGE_RATE_PROVIDER=nenhum`, o card mostra "—", **os valores em USD continuam** e a tela não quebra |
 | 10 | **Sem dado ≠ zero** | Conta sem carga no período aparece como "sem dado", não como US$ 0,00 |
+| 11 | **Bate com o Cost Explorer** | Selecione um mês fechado e compare com o Cost Explorer (ver abaixo) |
+
+### Conferir contra o AWS Cost Explorer
+
+No Cost Explorer: **Monthly** · filtro *Linked Account* = a conta · o mês
+desejado · métrica **Unblended costs**. É esse número que o card
+**"Custo total do período de cobrança"** reproduz.
 
 ```bash
-# conferência direta contra o banco
-docker exec finops-postgres psql -U finops_user -d finops -c \
-  "SELECT sum(cost_amount) FROM aws_daily_costs
-    WHERE usage_date BETWEEN '2026-08-01' AND '2026-08-13';"
+# reconciliação completa, com o fechamento aritmético
+docker exec -i finops-postgres psql -U finops_user -d finops -X --no-psqlrc \
+  -v conta=800168045394 -v periodo=2026-07 \
+  < scripts/reconciliacao-cost-explorer.sql
 ```
+
+O script mostra as duas leituras lado a lado, lista as linhas deslocadas que
+explicam a diferença e confirma que `operacional + deslocado = financeiro`.
+
+> **Não compare o gráfico de evolução diária com o Cost Explorer mensal.** Ele
+> soma por data de uso e vai divergir sempre que houver cobrança pontual — por
+> desenho, não por erro. Quando isso acontece, o portal exibe um aviso dizendo
+> quanto e quantos lançamentos.
 
 Na tela **Analítico**: a paginação deve dizer o total de lançamentos do filtro
 (não da página), a ordenação por coluna deve mudar a ordem no servidor, e a
@@ -441,6 +547,7 @@ Na tela `/dashboard/analitico`, com um filtro aplicado:
 | 2 | **Baixar Excel** | Arquivo `.xlsx` com o mesmo período no nome |
 | 3 | **Mesmos filtros** | O arquivo traz **todas** as linhas do filtro, não só a página visível |
 | 4 | **Cabeçalho de contexto** | Período, contas, data/hora da exportação, cotação usada e o aviso de que BRL é estimativa |
+| 4b | **Período de cobrança** | Primeira coluna do arquivo. É o que explica uma linha com data de uso fora do período selecionado |
 | 5 | **CSV no Excel pt-BR** | Abre com colunas separadas e acentos corretos (BOM UTF-8, separador `;`, decimal com vírgula) |
 | 6 | **Sem sessão** | `curl` sem cookie em `/api/export/csv` responde **401** |
 | 7 | **Acima do teto** | Filtro maior que `EXPORT_MAX_ROWS` responde **413** com mensagem pedindo para estreitar — nunca arquivo truncado |
@@ -471,6 +578,9 @@ caminho que possa divergir.
 | Erro de porta em uso ao subir | `APP_PORT` colidindo (3000 é do Metabase) | Volte para `APP_PORT=3001` |
 | Login não fecha; volta para `/login` | `AUTH_COOKIE_SECURE=true` sem HTTPS e sem ser localhost | Acesse por túnel SSH, ou ponha HTTPS na frente. **Não** desligue o `Secure` em produção |
 | `/api/health` responde só `{"ok":…}` | Comportamento correto: o detalhe (versão, banco, erro) só sai com sessão | Para diagnosticar, veja `docker logs finops-portal` — o erro do driver é registrado lá |
+| `column "billing_month" does not exist` | O portal subiu **antes** da migração 001 | Rode a migração e reinicie. Ver seção 8, passo 5 |
+| O total continua sem bater com o Cost Explorer | Migração aplicada, mas o backfill não rodou | `scripts/backfill-billing-period.py --aplicar --realinhar-mes`. A consulta 5 do script de reconciliação mostra a cobertura |
+| O mesmo valor aparece duas vezes na tabela mensal | Backfill rodou sem `--realinhar-mes` | Reexecute com a opção. A carga mensal insere no mês certo e a linha antiga fica no errado |
 | Tela em branco / erro 500 nas telas de dado | Banco fora, ou schema diferente do esperado | `curl localhost:3001/api/health`; `/diagnostico` (ADMIN) mostra a última carga do ETL |
 | `403 sem-permissao` | Perfil `VIEWER` acessando rota de ADMIN | Esperado. Ajuste o papel do usuário |
 | Exportação responde 413 | O filtro seleciona mais que `EXPORT_MAX_ROWS` | Estreite período/contas, ou suba o teto **e** `APP_MEM_LIMIT` juntos |
@@ -528,8 +638,17 @@ caminho que possa divergir.
 13. **Há um "serviço" anômalo na base:** `dwqdkp3l0lnh14y2rkq6m7l2x`, com ~86% do
     custo do mês. O nome não é de um serviço AWS. Precisa ser investigado na
     origem (Athena/CUR), não no portal.
-14. **Há custo lançado além do período** (registros com data futura, típico de
-    cobrança anual adiantada). A tela avisa e **não** soma esse valor aos KPIs.
+14. **O gráfico diário não bate com o card financeiro** quando há cobrança
+    pontual no período — e isso é correto. São perguntas diferentes: o card
+    segue a fatura, o gráfico segue o dia de uso. A tela avisa quando ocorre.
+15. **`region` é gravada como a string `"nan"`** quando o CUR não informa a zona
+    (o ETL faz `str()` sobre um `NaN` do pandas). O portal traduz para "não
+    informada" na leitura. Corrigir na origem mudaria o valor da chave única e
+    criaria linhas duplicadas — precisa de migração própria.
+16. **O filtro por período de cobrança tem granularidade de mês.** Num recorte
+    de dias (últimos 7 dias, personalizado), uma cobrança deslocada é atribuída
+    ao recorte se o mês da fatura dela estiver dentro dele. É a atribuição menos
+    errada possível: a alternativa seria o valor sumir de todas as telas.
 
 **Desenvolvimento**
 
@@ -576,6 +695,15 @@ docker exec finops-postgres psql -U finops_user -d finops -c \
 - [ ] Fallback da cotação: com `EXCHANGE_RATE_PROVIDER=nenhum` a tela segue em USD
 - [ ] Tabela analítica paginada no servidor
 - [ ] Export CSV · [ ] Export XLSX (seção 11)
+- [ ] **Reconcilia com o Cost Explorer**: um mês fechado bate com *Unblended costs*
+- [ ] O analítico do mesmo período soma o mesmo que o card
+- [ ] Somar todos os períodos devolve o total da base (nada em dobro, nada perdido)
+
+```bash
+docker exec -i finops-postgres psql -U finops_user -d finops -X --no-psqlrc \
+  -v conta=800168045394 -v periodo=2026-07 \
+  < scripts/reconciliacao-cost-explorer.sql      # consulta 3: confere = t
+```
 
 ### Performance
 

@@ -10,7 +10,12 @@ import {
 import type { Direcao } from "@/lib/filtros/esquemas";
 import { toNumber } from "@/lib/format";
 
-import { condicoesDeCorte, juntarE, type FiltroCusto } from "./filtros-sql";
+import {
+  condicoesDeCorte,
+  janelaAtual,
+  juntarE,
+  type FiltroCusto,
+} from "./filtros-sql";
 
 /**
  * Consulta analitica: LINHA A LINHA de `aws_daily_costs`, paginada no banco.
@@ -57,8 +62,18 @@ export const CAMPOS_ORDENACAO_ANALITICA = Object.keys(COLUNAS_ORDENACAO) as [
 
 export type LinhaAnalitica = {
   id: string;
-  /** Data de uso, "AAAA-MM-DD" -- data de calendario, sem fuso. */
+  /**
+   * Data de USO, "AAAA-MM-DD" -- data de calendario, sem fuso.
+   *
+   * Nao confundir com `billingPeriod`: e possivel (e normal em cobranca
+   * pontual) que a data de uso caia fora do periodo em que a AWS faturou.
+   */
   usageDate: string;
+  /**
+   * Periodo de COBRANCA, "AAAA-MM". E o criterio que reconcilia com o AWS Cost
+   * Explorer, e o mesmo que filtra esta tela.
+   */
+  billingPeriod: string;
   accountId: string;
   /** `null` quando a conta tem custo mas nao esta em `cloud_accounts`. */
   accountName: string | null;
@@ -119,10 +134,14 @@ function condicoesAnaliticas(
 ): string[] {
   // O analitico usa APENAS a janela atual: nao existe comparacao com periodo
   // anterior numa lista de lancamentos.
-  const de = p.add(filtro.periodo.de);
-  const ate = p.add(filtro.periodo.ate);
+  //
+  // CRITERIO `cobranca`, o mesmo do painel executivo. O analitico e o detalhe
+  // dos cards: se ele filtrasse por data de uso, clicar de um total de
+  // US$ 348,73 para a lista traria US$ 311,41 e a conferencia linha a linha --
+  // que e a razao de existir desta tela -- nao fecharia. A data de uso continua
+  // visivel em cada linha, ao lado do periodo de cobranca.
   const condicoes = [
-    `d.usage_date BETWEEN ${de} AND ${ate}`,
+    janelaAtual(p, filtro, "d", "cobranca"),
     ...condicoesDeCorte(p, filtro),
   ];
 
@@ -163,6 +182,7 @@ export async function getPaginaAnalitica(
   const linhas = await executar<{
     id: string;
     usage_date: string;
+    billing_period: string;
     account_id: string;
     account_name: string | null;
     service: string;
@@ -175,6 +195,11 @@ export async function getPaginaAnalitica(
     `
     SELECT d.id,
            d.usage_date,
+           -- Periodo de COBRANCA ao lado da data de uso. Sem esta coluna, um
+           -- arquivo exportado de julho traria uma linha datada 04/09 sem nada
+           -- que explicasse por que ela esta ali. O coalesce mantem o valor
+           -- preenchido mesmo antes do backfill.
+           coalesce(d.billing_period, to_char(d.usage_date, 'YYYY-MM')) AS billing_period,
            d.account_id,
            a.account_name,
            d.service,
@@ -206,6 +231,7 @@ export async function getPaginaAnalitica(
     linhas: linhas.map((l) => ({
       id: String(l.id),
       usageDate: l.usage_date,
+      billingPeriod: l.billing_period,
       accountId: l.account_id,
       accountName: l.account_name,
       service: l.service,

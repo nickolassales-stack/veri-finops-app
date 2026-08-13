@@ -75,6 +75,16 @@ export type Resumo = {
   primeiroDiaComDado: string | null;
   ultimoDiaComDado: string | null;
   mediaDiaria: number;
+  /**
+   * Parte do `total` que a AWS faturou neste periodo com data de uso em OUTRO
+   * mes -- tipicamente cobranca pontual (registro de dominio, taxa anual).
+   *
+   * Zero na quase totalidade dos recortes. Quando nao e zero, e exatamente a
+   * diferenca entre este card e a soma do grafico diario, que segue a data de
+   * uso. A tela precisa dizer isso, senao a divergencia parece erro de conta.
+   */
+  custoDeslocado: number;
+  linhasDeslocadas: number;
   estimativaBRL: EstimativaBRL;
 };
 

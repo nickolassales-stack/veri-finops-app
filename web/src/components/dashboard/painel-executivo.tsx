@@ -101,6 +101,12 @@ export function PainelExecutivo({ tz }: { tz: string }) {
   const periodo = dados.meta?.periodo;
   const avisos = dados.meta?.avisos ?? [];
 
+  // Cobranca lancada neste periodo cuja data de uso cai em outro mes. Zero na
+  // quase totalidade dos recortes; quando nao e zero, e a explicacao exata da
+  // diferenca entre o card financeiro e o grafico diario.
+  const custoDeslocado = dados.resumo.dados?.custoDeslocado ?? 0;
+  const linhasDeslocadas = dados.resumo.dados?.linhasDeslocadas ?? 0;
+
   return (
     <div className="space-y-6">
       {/* ------------------------------------------------------- cabecalho */}
@@ -166,13 +172,43 @@ export function PainelExecutivo({ tz }: { tz: string }) {
         </Aviso>
       )}
 
-      {periodo?.existeDadoAlemDaJanela && (
-        <Aviso tom="info" titulo="Há custo lançado além do período">
+      {/*
+        Antes daqui existia um aviso dizendo que havia "custo lancado alem do
+        periodo" e que ele NAO entrava em nenhum numero da tela. Isso deixou de
+        ser verdade: cobranca deslocada agora e atribuida a fatura a que
+        pertence, entao ela entra, sim -- e e por isso que o total passou a
+        bater com o Cost Explorer. Manter o texto antigo faria o usuario
+        desconfiar justamente do numero que ficou certo.
+      */}
+      {custoDeslocado > 0 && (
+        <Aviso tom="info" titulo="Cobrança com data de uso fora do período">
           <p>
-            A base tem registros com data posterior a{" "}
-            <strong className="font-medium">{formatDataDia(periodo.ate)}</strong> — típico
-            de cobrança anual lançada adiantado. Esse valor não entra em nenhum número
-            desta tela.
+            Algumas cobranças podem ter data de uso fora do período, mas pertencem ao
+            período financeiro selecionado pela AWS. Neste recorte são{" "}
+            <strong className="font-medium">{formatUSD(custoDeslocado)}</strong> em{" "}
+            {formatInteiro(linhasDeslocadas)} lançamento(s) — já somados ao custo total,
+            como no Cost Explorer.
+          </p>
+          <p className="mt-1">
+            É por isso que o gráfico de evolução diária, que segue a data de uso, pode
+            somar menos que o card de custo total.
+          </p>
+        </Aviso>
+      )}
+
+      {/*
+        Continua valendo o aviso de dado ADIANTE da janela que nao foi puxado
+        para ela -- caso de uso futuro cobrado numa fatura futura. So aparece
+        quando nao ha deslocamento a explicar, para as duas mensagens nao se
+        contradizerem na mesma tela.
+      */}
+      {periodo?.existeDadoAlemDaJanela && custoDeslocado === 0 && (
+        <Aviso tom="info" titulo="Há registro com data posterior à janela">
+          <p>
+            A base tem lançamentos com data de uso posterior a{" "}
+            <strong className="font-medium">{formatDataDia(periodo.ate)}</strong>. Eles
+            não entram nos números desta tela: cada um é contado no período de cobrança a
+            que pertence — que pode ser anterior ou posterior a este.
           </p>
         </Aviso>
       )}
@@ -341,12 +377,18 @@ export function PainelExecutivo({ tz }: { tz: string }) {
       </Card>
 
       {/* ----------------------------------------------- evolucao diaria */}
+      {/*
+        Este bloco e o unico da tela que NAO usa o periodo de cobranca: um
+        grafico diario responde "em que dia isso rodou", e essa pergunta so tem
+        resposta pela data de uso. O titulo diz isso para que a soma do grafico
+        poder divergir do card financeiro nao pareca defeito.
+      */}
       <Card
-        titulo="Evolução diária dos custos"
+        titulo="Evolução diária por data de uso"
         descricao={
           dados.meta?.diasSemDado
-            ? "A linha se interrompe nos dias sem carga do ETL — lacuna é diferente de custo zero."
-            : "Soma diária no período selecionado."
+            ? "Visão operacional: cada ponto é o dia em que o recurso rodou. A linha se interrompe nos dias sem carga do ETL — lacuna é diferente de custo zero."
+            : "Visão operacional: cada ponto é o dia em que o recurso rodou, não a fatura em que ele foi cobrado."
         }
       >
         <BlocoRecurso
