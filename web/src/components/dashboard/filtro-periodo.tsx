@@ -33,7 +33,7 @@ export function FiltroPeriodo({
 
   return (
     <fieldset className="min-w-0">
-      <legend className="text-xs font-medium uppercase tracking-wide text-veri-verde-escuro/60">
+      <legend className="text-xs font-medium uppercase tracking-wide text-texto-suave">
         Período
       </legend>
 
@@ -78,7 +78,7 @@ export function FiltroPeriodo({
           <div>
             <label
               htmlFor={idDe}
-              className="block text-xs text-veri-verde-escuro/70"
+              className="block text-xs text-texto-suave"
             >
               De
             </label>
@@ -97,7 +97,7 @@ export function FiltroPeriodo({
           <div>
             <label
               htmlFor={idAte}
-              className="block text-xs text-veri-verde-escuro/70"
+              className="block text-xs text-texto-suave"
             >
               Até
             </label>

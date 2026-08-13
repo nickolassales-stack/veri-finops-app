@@ -65,7 +65,7 @@ export function TabelaAnalitica({
         </caption>
 
         <thead>
-          <tr className="border-b border-veri-offwhite text-left text-xs uppercase tracking-wide text-veri-verde-escuro/60">
+          <tr className="border-b border-veri-offwhite text-left text-xs uppercase tracking-wide text-texto-suave">
             {COLUNAS.map((coluna) => {
               const ativa = coluna.campo === filtros.ordenarPor;
               return (
@@ -132,10 +132,10 @@ export function TabelaAnalitica({
                     identifica a conta na AWS. */}
                 <span className="block max-w-[16rem] truncate">
                   {linha.accountName ?? (
-                    <span className="text-veri-verde-escuro/60">sem cadastro</span>
+                    <span className="text-texto-suave">sem cadastro</span>
                   )}
                 </span>
-                <span className="veri-numero block text-xs text-veri-verde-escuro/60">
+                <span className="veri-numero block text-xs text-texto-suave">
                   {linha.accountId}
                 </span>
               </td>
@@ -146,9 +146,9 @@ export function TabelaAnalitica({
                 </span>
               </td>
 
-              <td className="py-2 pr-4 whitespace-nowrap text-veri-verde-escuro/75">
+              <td className="py-2 pr-4 whitespace-nowrap text-texto-suave">
                 {linha.region ?? (
-                  <span className="text-veri-verde-escuro/45">não informada</span>
+                  <span className="text-texto-suave">não informada</span>
                 )}
               </td>
 
@@ -159,10 +159,10 @@ export function TabelaAnalitica({
 
               {/* ESTIMATIVA: tinta secundaria e prefixo "~". A diferenca de peso
                   entre esta coluna e a anterior e a propria informacao. */}
-              <td className="veri-numero py-2 text-right whitespace-nowrap text-veri-verde-escuro/60">
+              <td className="veri-numero py-2 text-right whitespace-nowrap text-texto-suave">
                 {linha.estimatedBRL === null ? (
                   <span
-                    className="text-veri-verde-escuro/40"
+                    className="text-texto-suave"
                     title={cotacao?.mensagemErro ?? "Cotação indisponível"}
                   >
                     indisponível
@@ -183,7 +183,7 @@ export function TabelaAnalitica({
         <tfoot>
           <tr>
             <td colSpan={COLUNAS.length} className="pt-3">
-              <p className="text-xs leading-relaxed text-veri-verde-escuro/70">
+              <p className="text-xs leading-relaxed text-texto-suave">
                 {semCotacao ? (
                   <>
                     <strong className="font-medium">Cotação indisponível.</strong>{" "}

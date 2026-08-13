@@ -41,7 +41,7 @@ export function Paginacao({
     >
       {/* `aria-live`: ao trocar de pagina o leitor de tela anuncia a nova faixa,
           senao as linhas mudam sem nenhum aviso. */}
-      <p aria-live="polite" className="text-sm text-veri-verde-escuro/75">
+      <p aria-live="polite" className="text-sm text-texto-suave">
         {total === 0 ? (
           "Nenhuma linha"
         ) : (
@@ -51,7 +51,7 @@ export function Paginacao({
               {formatInteiro(primeiraLinha)}–{formatInteiro(ultimaLinha)}
             </span>{" "}
             de <span className="veri-numero">{formatInteiro(total)}</span>
-            <span className="text-veri-verde-escuro/60">
+            <span className="text-texto-suave">
               {" "}
               · página {formatInteiro(pagina)} de {formatInteiro(paginas)}
             </span>

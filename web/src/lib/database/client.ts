@@ -137,6 +137,11 @@ export async function checkDbHealth(): Promise<DbHealth> {
       database: row.banco,
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    const error = err instanceof Error ? err.message : String(err);
+    // O log e o canal certo para este detalhe: `/api/health` responde sem sessao
+    // e a mensagem do driver costuma trazer usuario e host do banco. Quem le
+    // `docker logs` ja tem shell na maquina; quem chama a rota, nao.
+    console.error("[db] healthcheck falhou:", error);
+    return { ok: false, error };
   }
 }

@@ -21,7 +21,7 @@ export function TrocaSenhaForm({ minimo }: { minimo: number }) {
         <div key={campo.nome}>
           <label
             htmlFor={campo.nome}
-            className="block text-xs font-medium uppercase tracking-wide text-veri-verde-escuro/70"
+            className="block text-xs font-medium uppercase tracking-wide text-texto-suave"
           >
             {campo.rotulo}
           </label>
@@ -38,7 +38,7 @@ export function TrocaSenhaForm({ minimo }: { minimo: number }) {
         </div>
       ))}
 
-      <p className="text-xs text-veri-verde-escuro/60">
+      <p className="text-xs text-texto-suave">
         Mínimo de {minimo} caracteres. Ao trocar a senha, as sessões abertas em
         outros navegadores são encerradas.
       </p>

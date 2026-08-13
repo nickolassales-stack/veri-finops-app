@@ -53,7 +53,7 @@ export function BarraFiltros({
           <span
             aria-live="polite"
             className={[
-              "text-xs text-veri-verde-escuro/60 transition-opacity",
+              "text-xs text-texto-suave transition-opacity",
               carregando ? "opacity-100" : "opacity-0",
             ].join(" ")}
           >

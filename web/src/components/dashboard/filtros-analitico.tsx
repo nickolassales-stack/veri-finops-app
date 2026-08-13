@@ -64,7 +64,7 @@ export function FiltrosAnalitico({
       <div className="min-w-0 flex-1 sm:max-w-xs">
         <label
           htmlFor={idBusca}
-          className="block text-xs font-medium uppercase tracking-wide text-veri-verde-escuro/60"
+          className="block text-xs font-medium uppercase tracking-wide text-texto-suave"
         >
           Buscar serviço
         </label>
@@ -78,14 +78,14 @@ export function FiltrosAnalitico({
             placeholder="ex.: EC2, S3, waf"
             // `type=search` com `enterkeyhint` melhora o teclado no celular.
             enterKeyHint="search"
-            className="w-full rounded-full border border-veri-verde-claro/50 bg-veri-branco px-4 py-1.5 pr-9 text-sm text-veri-verde-escuro placeholder:text-veri-verde-escuro/40"
+            className="w-full rounded-full border border-veri-verde-claro/50 bg-veri-branco px-4 py-1.5 pr-9 text-sm text-veri-verde-escuro placeholder:text-texto-suave"
           />
           {texto && (
             <button
               type="button"
               onClick={() => setTexto("")}
               aria-label="Limpar busca por serviço"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full px-1.5 text-veri-verde-escuro/50 hover:text-veri-verde-escuro"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full px-1.5 text-texto-suave hover:text-veri-verde-escuro"
             >
               <span aria-hidden>×</span>
             </button>
@@ -97,7 +97,7 @@ export function FiltrosAnalitico({
       <div className="min-w-0">
         <label
           htmlFor={idRegiao}
-          className="block text-xs font-medium uppercase tracking-wide text-veri-verde-escuro/60"
+          className="block text-xs font-medium uppercase tracking-wide text-texto-suave"
         >
           Região
         </label>
@@ -122,7 +122,7 @@ export function FiltrosAnalitico({
           nao região (us-east-1), e grava "nan" quando nao sabe. Dizer isso aqui
           evita que alguem interprete o corte como filtro de região de verdade.
         */}
-        <p className="mt-1.5 max-w-52 text-[11px] leading-snug text-veri-verde-escuro/50">
+        <p className="mt-1.5 max-w-52 text-[11px] leading-snug text-texto-suave">
           O ETL grava zona de disponibilidade, não região.
         </p>
       </div>
@@ -131,7 +131,7 @@ export function FiltrosAnalitico({
       <div className="min-w-0">
         <label
           htmlFor={idTamanho}
-          className="block text-xs font-medium uppercase tracking-wide text-veri-verde-escuro/60"
+          className="block text-xs font-medium uppercase tracking-wide text-texto-suave"
         >
           Linhas por página
         </label>

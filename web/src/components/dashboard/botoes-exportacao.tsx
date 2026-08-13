@@ -57,7 +57,7 @@ export function BotoesExportacao({
           aoClicar={() => exportar("xlsx")}
         />
 
-        <p className="text-xs leading-snug text-veri-verde-escuro/60">
+        <p className="text-xs leading-snug text-texto-suave">
           {motivoIndisponivel ? (
             motivoIndisponivel
           ) : total === null ? (
@@ -95,7 +95,7 @@ function Anuncio({
 }) {
   if (estado.fase === "exportando") {
     return (
-      <p className="text-xs text-veri-verde-escuro/70">
+      <p className="text-xs text-texto-suave">
         Gerando o arquivo no servidor… pode levar alguns segundos em períodos
         longos.
       </p>
@@ -159,7 +159,11 @@ function Botao({
           ? `${rotulo} dos lançamentos do filtro`
           : `${rotulo} com ${formatInteiro(total)} lançamento(s) do filtro atual`
       }
-      className="inline-flex items-center gap-2 rounded-full bg-veri-verde px-5 py-2 text-sm font-medium text-veri-branco transition-colors hover:bg-veri-verde-escuro disabled:cursor-not-allowed disabled:bg-veri-verde/40"
+      // `verde-escuro` e nao `verde`: branco sobre #7f9c90 da 2,97:1, abaixo do
+      // minimo de 4,5:1 da WCAG AA para texto normal. Sobre #384e46 sao 8,95:1.
+      // E o mesmo tratamento dos demais botoes primarios (login, troca de senha,
+      // filtro de periodo) -- este era o unico fora do padrao.
+      className="inline-flex items-center gap-2 rounded-full bg-veri-verde-escuro px-5 py-2 text-sm font-medium text-veri-branco transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
     >
       {carregando && (
         <span

@@ -23,7 +23,7 @@ export function Card({ titulo, descricao, acao, children, className }: CardProps
               <h2 className="veri-display text-lg text-veri-verde-escuro">{titulo}</h2>
             )}
             {descricao && (
-              <p className="mt-1 text-sm text-veri-verde-escuro/70">{descricao}</p>
+              <p className="mt-1 text-sm text-texto-suave">{descricao}</p>
             )}
           </div>
           {acao}

@@ -69,9 +69,9 @@ export function ErroDoBloco({
       className="rounded-xl border border-veri-vinho/30 bg-veri-vinho/5 px-5 py-4 text-sm"
     >
       <p className="font-semibold text-veri-vinho">{titulo}</p>
-      <p className="mt-1 text-veri-verde-escuro/80">{mensagem}</p>
+      <p className="mt-1 text-texto-suave">{mensagem}</p>
       {detalhes && detalhes.length > 0 && (
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-veri-verde-escuro/80">
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-texto-suave">
           {detalhes.map((d, i) => (
             <li key={i}>
               <span className="font-medium">{d.campo}</span>: {d.mensagem}
@@ -107,7 +107,7 @@ export function Vazio({
     <div className="rounded-xl border border-dashed border-veri-verde-claro/50 px-5 py-8 text-center">
       <p className="text-sm font-medium text-veri-verde-escuro">{titulo}</p>
       {children && (
-        <div className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-veri-verde-escuro/70">
+        <div className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-texto-suave">
           {children}
         </div>
       )}

@@ -85,7 +85,13 @@ export function DistribuicaoServicosChart({
             style={{
               // `flexBasis` em percentual: a barra e sempre exatamente 100%.
               flexBasis: `${fatia.fracao * 100}%`,
-              backgroundColor: "#7F9C90",
+              // Verde-escuro, e nao o verde da marca, por causa do rotulo QUE
+              // FICA DENTRO da fatia: branco sobre #7F9C90 da 2,97:1, abaixo dos
+              // 4,5:1 da WCAG AA; sobre #384E46 sao 8,95:1. Trocar o tom aqui nao
+              // custa informacao nenhuma -- nesta barra todas as fatias tem a
+              // MESMA cor de proposito (a identidade vem do rotulo, ver o
+              // cabecalho do arquivo), entao a cor nao codifica nada.
+              backgroundColor: "#384E46",
               // Separador de 2px na cor da superficie entre fatias vizinhas.
               marginLeft: i === 0 ? 0 : 2,
             }}
@@ -103,7 +109,7 @@ export function DistribuicaoServicosChart({
         ))}
       </div>
 
-      <p className="mt-3 text-sm text-veri-verde-escuro/70">
+      <p className="mt-3 text-sm text-texto-suave">
         {servicosPara80 === 1 ? (
           <>
             <strong className="font-medium">1 serviço</strong> concentra mais de 80% do
@@ -129,8 +135,10 @@ export function DistribuicaoServicosChart({
             <dt className="flex min-w-0 items-center gap-2">
               <span
                 aria-hidden
+                // Mesmo tom da barra: o quadradinho so serve para amarrar a
+                // linha da legenda a faixa acima.
                 className={[
-                  "h-2.5 w-2.5 shrink-0 rounded-sm bg-veri-verde",
+                  "h-2.5 w-2.5 shrink-0 rounded-sm bg-veri-verde-escuro",
                   fatia.agrupada ? "veri-textura" : "",
                 ].join(" ")}
               />
@@ -138,9 +146,9 @@ export function DistribuicaoServicosChart({
                 {fatia.nome}
               </span>
             </dt>
-            <dd className="veri-numero shrink-0 text-sm text-veri-verde-escuro/75">
+            <dd className="veri-numero shrink-0 text-sm text-texto-suave">
               {formatParticipacao(fatia.fracao)}
-              <span className="text-veri-verde-escuro/50"> · {formatUSD(fatia.valor)}</span>
+              <span className="text-texto-suave"> · {formatUSD(fatia.valor)}</span>
             </dd>
           </div>
         ))}

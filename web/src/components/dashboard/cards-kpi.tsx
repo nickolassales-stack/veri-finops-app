@@ -47,7 +47,7 @@ function Cartao({
         className ?? "",
       ].join(" ")}
     >
-      <p className="text-xs uppercase tracking-wide text-veri-verde-escuro/60">
+      <p className="text-xs uppercase tracking-wide text-texto-suave">
         {rotulo}
       </p>
       {children}
@@ -90,7 +90,7 @@ export function CardsKpi({
         <p className="veri-numero veri-display mt-2 text-4xl text-veri-verde-escuro">
           {formatUSD(resumo.total)}
         </p>
-        <p className="mt-2 text-xs leading-relaxed text-veri-verde-escuro/70">
+        <p className="mt-2 text-xs leading-relaxed text-texto-suave">
           Valor oficial, em dólar, como a AWS fatura.{" "}
           {resumo.diasComDado > 0 ? (
             <>
@@ -106,18 +106,17 @@ export function CardsKpi({
 
       {/* -------------------------------------------------- estimativa BRL */}
       <Cartao rotulo="Estimativa em real">
-        <p
-          className={[
-            "veri-numero mt-2 text-3xl",
-            // Tinta secundaria: subordina visualmente a estimativa ao oficial.
-            resumo.estimativaBRL.total === null
-              ? "text-veri-verde-escuro/40"
-              : "text-veri-verde-escuro/75",
-          ].join(" ")}
-        >
+        {/*
+          Tinta secundaria: subordina visualmente a estimativa ao valor oficial
+          em dolar. A ausencia de cotacao NAO e sinalizada por uma tinta ainda
+          mais fraca -- nao existe tom mais claro que passe em contraste, e
+          significado nao pode depender so de cor. Quem diz que falta cotacao e
+          o proprio conteudo: o travessao aqui e a frase logo abaixo.
+        */}
+        <p className="veri-numero mt-2 text-3xl text-texto-suave">
           {formatBRLEstimado(resumo.estimativaBRL.total)}
         </p>
-        <p className="mt-2 text-xs leading-relaxed text-veri-verde-escuro/70">
+        <p className="mt-2 text-xs leading-relaxed text-texto-suave">
           {resumo.estimativaBRL.total === null ? (
             <>Sem cotação disponível — o valor em dólar continua exato.</>
           ) : (
@@ -136,12 +135,12 @@ export function CardsKpi({
       <Cartao rotulo="Contas e variação">
         <p className="veri-numero veri-display mt-2 text-3xl text-veri-verde-escuro">
           {formatInteiro(resumo.contasComCusto)}
-          <span className="text-lg text-veri-verde-escuro/60">
+          <span className="text-lg text-texto-suave">
             {" "}
             de {formatInteiro(resumo.contasAtivasCadastradas)}
           </span>
         </p>
-        <p className="text-xs text-veri-verde-escuro/60">
+        <p className="text-xs text-texto-suave">
           conta(s) com custo no período
         </p>
         <div className="mt-3 border-t border-veri-offwhite pt-3 text-xs leading-relaxed">
@@ -164,12 +163,11 @@ function CardCotacao({ cotacao, tz }: { cotacao: Cotacao; tz: string }) {
 
   return (
     <Cartao rotulo="Cotação USD/BRL">
-      <p
-        className={[
-          "veri-numero mt-2 text-3xl",
-          indisponivel ? "text-veri-verde-escuro/40" : "text-veri-verde-escuro/85",
-        ].join(" ")}
-      >
+      {/*
+        Mesma regra do card de estimativa: a indisponibilidade aparece no
+        conteudo (o travessao e a etiqueta logo abaixo), nunca so na tinta.
+      */}
+      <p className="veri-numero mt-2 text-3xl text-texto-suave">
         {indisponivel ? "—" : `R$ ${formatCotacao(cotacao.valor)}`}
       </p>
 
@@ -177,21 +175,21 @@ function CardCotacao({ cotacao, tz }: { cotacao: Cotacao; tz: string }) {
 
       <dl className="mt-3 space-y-1 border-t border-veri-offwhite pt-3 text-xs">
         <div className="flex justify-between gap-3">
-          <dt className="text-veri-verde-escuro/60">Referência</dt>
-          <dd className="veri-numero text-right text-veri-verde-escuro/80">
+          <dt className="text-texto-suave">Referência</dt>
+          <dd className="veri-numero text-right text-texto-suave">
             {cotacao.dataHoraReferencia
               ? formatDataHora(cotacao.dataHoraReferencia, tz)
               : formatDataDia(cotacao.dataReferencia)}
           </dd>
         </div>
         <div className="flex justify-between gap-3">
-          <dt className="shrink-0 text-veri-verde-escuro/60">Fonte</dt>
-          <dd className="text-right text-veri-verde-escuro/80">{cotacao.fonte}</dd>
+          <dt className="shrink-0 text-texto-suave">Fonte</dt>
+          <dd className="text-right text-texto-suave">{cotacao.fonte}</dd>
         </div>
       </dl>
 
       {cotacao.mensagemErro && (
-        <p className="mt-2 text-xs leading-relaxed text-veri-verde-escuro/70">
+        <p className="mt-2 text-xs leading-relaxed text-texto-suave">
           {cotacao.mensagemErro}
         </p>
       )}
@@ -206,7 +204,7 @@ function CardCotacao({ cotacao, tz }: { cotacao: Cotacao; tz: string }) {
 function EtiquetaCotacao({ cotacao }: { cotacao: Cotacao }) {
   if (cotacao.status === "unavailable") {
     return (
-      <p className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-veri-offwhite px-2.5 py-0.5 text-xs text-veri-verde-escuro/70">
+      <p className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-veri-offwhite px-2.5 py-0.5 text-xs text-texto-suave">
         <span aria-hidden>○</span> indisponível
       </p>
     );
@@ -222,7 +220,7 @@ function EtiquetaCotacao({ cotacao }: { cotacao: Cotacao }) {
 
   if (cotacao.status === "cached") {
     return (
-      <p className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-veri-offwhite px-2.5 py-0.5 text-xs text-veri-verde-escuro/70">
+      <p className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-veri-offwhite px-2.5 py-0.5 text-xs text-texto-suave">
         <span aria-hidden>•</span> em cache
         {cotacao.idadeSegundos !== null && cotacao.idadeSegundos >= 60 && (
           <> · há {Math.floor(cotacao.idadeSegundos / 60)} min</>
@@ -259,7 +257,7 @@ function VariacaoPeriodo({
 
   if (resumo.variacao === null) {
     return (
-      <span className="text-veri-verde-escuro/60">
+      <span className="text-texto-suave">
         Sem base de comparação em {intervalo}.
       </span>
     );
@@ -267,7 +265,7 @@ function VariacaoPeriodo({
 
   if (!resumo.comparavel) {
     return (
-      <span className="text-veri-verde-escuro/75">
+      <span className="text-texto-suave">
         <strong className="font-medium">Variação não comparável:</strong> o conjunto de
         contas com dado mudou entre os períodos. O percentual mediria falta de carga,
         não consumo.
@@ -287,7 +285,7 @@ function VariacaoPeriodo({
       >
         {formatVariacao(resumo.variacao)}
       </span>{" "}
-      <span className="text-veri-verde-escuro/70">
+      <span className="text-texto-suave">
         {subiu ? "acima" : "abaixo"} de {intervalo} (
         <span className="veri-numero">{formatUSD(resumo.totalAnterior)}</span>)
       </span>

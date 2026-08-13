@@ -37,7 +37,7 @@ export default async function DiagnosticoPage() {
     <div className="space-y-8">
       <div>
         <h1 className="veri-display text-3xl text-veri-verde-escuro">Diagnostico</h1>
-        <p className="mt-2 max-w-2xl text-sm text-veri-verde-escuro/70">
+        <p className="mt-2 max-w-2xl text-sm text-texto-suave">
           Estado real da integracao com o PostgreSQL FinOps. Tudo nesta pagina vem do
           catalogo do proprio banco, sem assumir nenhum schema.
         </p>
@@ -54,14 +54,14 @@ export default async function DiagnosticoPage() {
         descricao={`${tabelas.length} objeto(s). Contagem de linhas e estimativa do planejador (pg_class.reltuples).`}
       >
         {tabelas.length === 0 ? (
-          <p className="text-sm text-veri-verde-escuro/70">
+          <p className="text-sm text-texto-suave">
             Nenhum objeto visivel para este usuario.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[36rem] text-sm">
               <thead>
-                <tr className="border-b border-veri-offwhite text-left text-xs uppercase tracking-wide text-veri-verde-escuro/60">
+                <tr className="border-b border-veri-offwhite text-left text-xs uppercase tracking-wide text-texto-suave">
                   <th className="py-2 pr-4 font-medium">Schema</th>
                   <th className="py-2 pr-4 font-medium">Objeto</th>
                   <th className="py-2 pr-4 font-medium">Tipo</th>
@@ -78,7 +78,7 @@ export default async function DiagnosticoPage() {
                   >
                     <td className="py-2 pr-4">{t.schema}</td>
                     <td className="py-2 pr-4 font-medium">{t.tabela}</td>
-                    <td className="py-2 pr-4 text-veri-verde-escuro/70">{t.tipo}</td>
+                    <td className="py-2 pr-4 text-texto-suave">{t.tipo}</td>
                     <td className="veri-numero py-2 pr-4 text-right">{t.colunas}</td>
                     <td className="veri-numero py-2 pr-4 text-right">
                       {formatInteiro(t.linhasEstimadas)}
@@ -114,7 +114,7 @@ export default async function DiagnosticoPage() {
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[30rem] text-sm">
             <thead>
-              <tr className="border-b border-veri-offwhite text-left text-xs uppercase tracking-wide text-veri-verde-escuro/60">
+              <tr className="border-b border-veri-offwhite text-left text-xs uppercase tracking-wide text-texto-suave">
                 <th className="py-2 pr-4 font-medium">Tabela</th>
                 <th className="py-2 font-medium">Privilegios</th>
               </tr>
@@ -126,7 +126,7 @@ export default async function DiagnosticoPage() {
                   className="border-b border-veri-offwhite/60 last:border-0"
                 >
                   <td className="py-2 pr-4 font-medium">{p.tabela}</td>
-                  <td className="veri-numero py-2 text-veri-verde-escuro/70">
+                  <td className="veri-numero py-2 text-texto-suave">
                     {p.privilegios}
                   </td>
                 </tr>

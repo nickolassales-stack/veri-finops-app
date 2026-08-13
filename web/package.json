@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "prestart": "node -e \"const fs=require('fs');fs.cpSync('public','.next/standalone/public',{recursive:true});fs.cpSync('.next/static','.next/standalone/.next/static',{recursive:true});console.log('assets estaticos copiados para .next/standalone')\"",
     "test": "vitest run",
     "create-admin": "node scripts/create-admin.mjs"

@@ -108,7 +108,7 @@ export function PainelExecutivo({ tz }: { tz: string }) {
         <h1 className="veri-display text-3xl text-veri-verde-escuro">
           Visão executiva
         </h1>
-        <p className="mt-2 text-sm text-veri-verde-escuro/70">
+        <p className="mt-2 text-sm text-texto-suave">
           Custos AWS consolidados · valores oficiais em{" "}
           <abbr title="dólar norte-americano" className="no-underline">
             USD
@@ -232,7 +232,7 @@ export function PainelExecutivo({ tz }: { tz: string }) {
               />
 
               {itens.some((c) => !c.temDadoNaJanela) && (
-                <p className="mt-3 rounded-lg bg-veri-offwhite px-4 py-2.5 text-sm text-veri-verde-escuro/75">
+                <p className="mt-3 rounded-lg bg-veri-offwhite px-4 py-2.5 text-sm text-texto-suave">
                   <strong className="font-medium">Sem dado no período:</strong>{" "}
                   {itens
                     .filter((c) => !c.temDadoNaJanela)
@@ -260,20 +260,20 @@ export function PainelExecutivo({ tz }: { tz: string }) {
                   >
                     <td className="py-2 pr-4">
                       <span className="font-medium">{c.accountName}</span>
-                      <span className="veri-numero block text-xs text-veri-verde-escuro/60">
+                      <span className="veri-numero block text-xs text-texto-suave">
                         {c.accountId}
                         {!c.cadastrada && " · fora do cadastro"}
                         {c.cadastrada && !c.active && " · inativa"}
                       </span>
                     </td>
-                    <td className="py-2 pr-4 text-veri-verde-escuro/70">
+                    <td className="py-2 pr-4 text-texto-suave">
                       {c.businessUnit ?? "—"}
                     </td>
                     <Num>
                       {c.temDadoNaJanela ? (
                         formatUSD(c.total)
                       ) : (
-                        <span className="text-veri-verde-escuro/50">sem dado</span>
+                        <span className="text-texto-suave">sem dado</span>
                       )}
                     </Num>
                     <Num>{formatUSD(c.totalAnterior)}</Num>
@@ -475,12 +475,12 @@ function PeriodoAplicado({
       className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 rounded-xl bg-veri-verde/8 px-5 py-3 text-sm"
     >
       <p className="text-veri-verde-escuro">
-        <span className="text-veri-verde-escuro/70">Período analisado: </span>
+        <span className="text-texto-suave">Período analisado: </span>
         <strong className="veri-numero font-medium">
           {periodo ? formatIntervalo(periodo.de, periodo.ate) : "—"}
         </strong>
         {periodo && (
-          <span className="text-veri-verde-escuro/70">
+          <span className="text-texto-suave">
             {" "}
             · {formatInteiro(periodo.dias)} dia(s) · {periodo.rotulo}
           </span>
@@ -489,7 +489,7 @@ function PeriodoAplicado({
           <span className="text-veri-vinho"> · intervalo informado é inválido</span>
         )}
       </p>
-      <p className="text-veri-verde-escuro/70">
+      <p className="text-texto-suave">
         {descreverFiltros(filtros, totalDeContas)}
         {geradoEm && (
           <span className="hidden sm:inline">

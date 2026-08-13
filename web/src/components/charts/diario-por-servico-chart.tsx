@@ -38,7 +38,7 @@ export function DiarioPorServicoChart({ dados }: { dados: DiarioPorServico }) {
 
   return (
     <div>
-      <p className="mb-4 text-sm text-veri-verde-escuro/70">
+      <p className="mb-4 text-sm text-texto-suave">
         Um quadro por serviço, todos na <strong className="font-medium">mesma escala
         vertical</strong> (até {formatUSDCompacto(maximo)}) — por isso a altura das
         curvas é comparável entre quadros.
@@ -60,7 +60,7 @@ export function DiarioPorServicoChart({ dados }: { dados: DiarioPorServico }) {
                 >
                   {serie.nome}
                 </h3>
-                <span className="veri-numero shrink-0 text-xs text-veri-verde-escuro/70">
+                <span className="veri-numero shrink-0 text-xs text-texto-suave">
                   {formatUSD(serie.total)}
                 </span>
               </div>
@@ -105,7 +105,7 @@ export function DiarioPorServicoChart({ dados }: { dados: DiarioPorServico }) {
                 </ResponsiveContainer>
               </div>
 
-              <p className="mt-0.5 flex justify-between text-[11px] text-veri-verde-escuro/50">
+              <p className="mt-0.5 flex justify-between text-[11px] text-texto-suave">
                 <span className="veri-numero">{rotuloDia(dados.dias[0] ?? "")}</span>
                 <span className="veri-numero">
                   {rotuloDia(dados.dias[dados.dias.length - 1] ?? "")}

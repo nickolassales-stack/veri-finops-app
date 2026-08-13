@@ -76,7 +76,7 @@ export function FiltroContas({
     <fieldset ref={container} className="relative min-w-0">
       <legend
         id={`${idBase}-rotulo`}
-        className="text-xs font-medium uppercase tracking-wide text-veri-verde-escuro/60"
+        className="text-xs font-medium uppercase tracking-wide text-texto-suave"
       >
         Contas AWS
       </legend>
@@ -97,7 +97,7 @@ export function FiltroContas({
               ? "Contas indisponíveis"
               : resumo}
         </span>
-        <span aria-hidden className="text-veri-verde-escuro/50">
+        <span aria-hidden className="text-texto-suave">
           {aberto ? "▲" : "▼"}
         </span>
       </button>
@@ -115,7 +115,7 @@ export function FiltroContas({
                 "w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-veri-offwhite",
                 nenhumaSelecionada
                   ? "font-medium text-veri-verde-escuro"
-                  : "text-veri-verde-escuro/70",
+                  : "text-texto-suave",
               ].join(" ")}
             >
               Todas as contas
@@ -139,10 +139,10 @@ export function FiltroContas({
                     <span className="block truncate text-veri-verde-escuro">
                       {conta.accountName}
                       {!conta.active && (
-                        <span className="text-veri-verde-escuro/50"> · inativa</span>
+                        <span className="text-texto-suave"> · inativa</span>
                       )}
                     </span>
-                    <span className="veri-numero block truncate text-xs text-veri-verde-escuro/60">
+                    <span className="veri-numero block truncate text-xs text-texto-suave">
                       {conta.accountId}
                       {conta.businessUnit && ` · ${conta.businessUnit}`}
                     </span>
@@ -152,7 +152,7 @@ export function FiltroContas({
             })}
 
             {lista.length === 0 && !contas.carregando && (
-              <p className="px-3 py-2 text-sm text-veri-verde-escuro/60">
+              <p className="px-3 py-2 text-sm text-texto-suave">
                 Nenhuma conta cadastrada.
               </p>
             )}

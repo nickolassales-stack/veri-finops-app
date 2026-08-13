@@ -22,13 +22,13 @@ export function VisaoTabela({
 }) {
   return (
     <details className="mt-4 group">
-      <summary className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-1 text-xs text-veri-verde-escuro/70 underline underline-offset-2 hover:text-veri-verde-escuro">
+      <summary className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-1 text-xs text-texto-suave underline underline-offset-2 hover:text-veri-verde-escuro">
         {rotulo}
       </summary>
       <div className="mt-3 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-veri-offwhite text-left text-xs uppercase tracking-wide text-veri-verde-escuro/60">
+            <tr className="border-b border-veri-offwhite text-left text-xs uppercase tracking-wide text-texto-suave">
               {colunas.map((c) => (
                 <th
                   key={c.titulo}

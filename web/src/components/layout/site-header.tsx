@@ -42,15 +42,23 @@ export function SiteHeader({ sessao }: { sessao: Sessao }) {
           <span aria-hidden className="hidden h-8 w-px bg-veri-offwhite sm:block" />
 
           <div className="flex items-center gap-3">
-            {/* O nome do usuario e o acesso a /conta, onde se troca a senha. */}
+            {/*
+              O nome do usuario e o acesso a /conta, onde se troca a senha.
+
+              Visivel em QUALQUER largura: escondido no celular, nao havia como
+              saber com que conta se esta logado nem como chegar a troca de
+              senha -- a unica outra porta para /conta. O cabecalho ja e
+              `flex-wrap`, entao em tela estreita este bloco desce de linha em
+              vez de espremer o logo.
+            */}
             <Link
               href="/conta"
-              className="hidden rounded-lg px-2 py-1 text-right text-xs leading-tight transition-colors hover:bg-veri-offwhite sm:block"
+              className="rounded-lg px-2 py-1 text-right text-xs leading-tight transition-colors hover:bg-veri-offwhite"
             >
               <span className="block text-veri-verde-escuro">
                 {sessao.nome ?? sessao.email}
               </span>
-              <span className="block text-veri-verde-escuro/60">
+              <span className="block text-texto-suave">
                 {sessao.papel} · minha conta
               </span>
             </Link>

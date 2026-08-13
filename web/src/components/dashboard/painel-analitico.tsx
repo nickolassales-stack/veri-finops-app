@@ -113,7 +113,7 @@ export function PainelAnalitico({ tz }: { tz: string }) {
         <h1 className="veri-display text-3xl text-veri-verde-escuro">
           Analítico de custos
         </h1>
-        <p className="mt-2 text-sm text-veri-verde-escuro/70">
+        <p className="mt-2 text-sm text-texto-suave">
           Lançamento a lançamento, direto de <code>aws_daily_costs</code> · valores
           oficiais em USD · paginação no servidor
         </p>
@@ -148,12 +148,12 @@ export function PainelAnalitico({ tz }: { tz: string }) {
         className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 rounded-xl bg-veri-verde/8 px-5 py-3 text-sm"
       >
         <p className="text-veri-verde-escuro">
-          <span className="text-veri-verde-escuro/70">Período analisado: </span>
+          <span className="text-texto-suave">Período analisado: </span>
           <strong className="veri-numero font-medium">
             {periodo ? formatIntervalo(periodo.de, periodo.ate) : "—"}
           </strong>
           {periodo && (
-            <span className="text-veri-verde-escuro/70">
+            <span className="text-texto-suave">
               {" "}
               · {formatInteiro(periodo.dias)} dia(s) ·{" "}
               {/*
@@ -167,7 +167,7 @@ export function PainelAnalitico({ tz }: { tz: string }) {
             </span>
           )}
         </p>
-        <p className="text-veri-verde-escuro/70">
+        <p className="text-texto-suave">
           {descreverFiltros(filtros, contas.dados?.length ?? null)}
           {meta?.geradoEm && (
             <span className="hidden sm:inline">
@@ -335,18 +335,18 @@ function Total({
           : "border-veri-offwhite bg-veri-branco",
       ].join(" ")}
     >
-      <p className="text-xs uppercase tracking-wide text-veri-verde-escuro/60">
+      <p className="text-xs uppercase tracking-wide text-texto-suave">
         {rotulo}
       </p>
       <p
         className={[
           "veri-numero mt-2 text-2xl",
-          fraco ? "text-veri-verde-escuro/70" : "veri-display text-veri-verde-escuro",
+          fraco ? "text-texto-suave" : "veri-display text-veri-verde-escuro",
         ].join(" ")}
       >
         {valor}
       </p>
-      <p className="mt-1 text-xs text-veri-verde-escuro/70">{apoio}</p>
+      <p className="mt-1 text-xs text-texto-suave">{apoio}</p>
     </div>
   );
 }
