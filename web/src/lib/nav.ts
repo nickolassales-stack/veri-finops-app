@@ -24,6 +24,7 @@ export type ItemNav = {
 export const navPrincipal: ItemNav[] = [
   { href: "/dashboard", label: "Visao executiva" },
   { href: "/dashboard/analitico", label: "Analitico" },
+  { href: "/dashboard/billing", label: "Faturamento", permissao: "billing:view" },
   { href: "/dashboard/configuracoes", label: "Configuracoes", permissao: "settings:view" },
   // `/diagnostico` continua respondendo (redireciona para ca), mas o menu ja
   // aponta para o destino: link de navegacao nao deve gastar um salto.

@@ -229,6 +229,7 @@ src/
       dashboard/             visão executiva
       dashboard/analitico/   analítico por serviço: tabela paginada no servidor
       dashboard/analitico/custos/  analítico por custo mensal (período de cobrança)
+      dashboard/billing/     faturamento: fechamento, avisos e pagamento (billing:*)
       dashboard/configuracoes/     área administrativa (settings:*)
       dashboard/diagnostico/ saúde do ETL, frescor da carga e do banco
       conta/                 dados da sessão e troca de senha
@@ -242,6 +243,7 @@ src/
       exchange-rate/         cotação USD/BRL
       export/                csv e xlsx do recorte atual (devolvem ARQUIVO)
       diagnostics/           etl, accounts, data-freshness (diagnostics:view)
+      billing/               status, settings, notifications (billing:view/manage)
   components/
     layout/                  header (logo, usuário, sair), nav, footer
     dashboard/               painel executivo, barra de filtros, cards de KPI
@@ -262,9 +264,16 @@ src/
       client.ts              pool pg, timeouts, checagem de saúde
       sql.ts                 ConstrutorParams, escape de LIKE, lista fechada
       tipos-pg.ts            date → string; timestamp → UTC (ver achado 7 do schema)
+    billing/
+      ciclo.ts               fechamento e vencimento (PURO): dia 31, mês seguinte
+      notificacoes.ts        avisos derivados + contrato de canal futuro (PURO)
+      pagamento.ts           vocabulário de status e fonte (PURO, servidor e cliente)
+      aws-invoicing.ts       integração desligada: assinatura final, sem chamar a AWS
     diagnostico/
       agenda.ts              quando o ETL deveria rodar (PURO): fuso do cron × fuso da tela
       etl.ts                 situação e alertas do pipeline + redação de segredo (PURO)
+    tempo/
+      calendario.ts          que dia é hoje neste fuso (PURO) — base do ETL e da fatura
     filtros/
       periodo.ts             resolução de período (PURO, testável)
       esquemas.ts            validação Zod de tudo que chega pela URL

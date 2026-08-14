@@ -90,6 +90,11 @@ services:
       ETL_EXECUCAO_ORFA_MINUTOS: ${ETL_EXECUCAO_ORFA_MINUTOS:-120}
       DIAGNOSTICO_DIAS_SEM_ATUALIZACAO: ${DIAGNOSTICO_DIAS_SEM_ATUALIZACAO:-3}
 
+      # Faturamento. MANTENHA false: nao ha integracao implementada, o portal
+      # nao tem credencial AWS, e nenhuma API da AWS diz se uma fatura foi paga.
+      # Ver docs/AWS-INVOICING.md.
+      AWS_INVOICING_ENABLED: ${AWS_INVOICING_ENABLED:-false}
+
     # 3001 no host, porque 3000 e do Metabase. O padrao publica SOMENTE no
     # loopback da EC2: para validar, use tunel SSH. Para liberar a usuarios de
     # gestao, coloque Nginx + HTTPS na frente e so entao troque APP_BIND --

@@ -46,18 +46,20 @@ describe("esquemaPatchConta", () => {
     expect(erroDe(esquemaPatchConta, { aliass: "x" })).toBeTruthy();
   });
 
-  it("limita o dia de fechamento ao intervalo de um mes", () => {
-    expect(esquemaPatchConta.safeParse({ invoiceCloseDay: 1 }).success).toBe(true);
-    expect(esquemaPatchConta.safeParse({ invoiceCloseDay: 31 }).success).toBe(true);
-    expect(esquemaPatchConta.safeParse({ invoiceCloseDay: 0 }).success).toBe(false);
-    expect(esquemaPatchConta.safeParse({ invoiceCloseDay: 32 }).success).toBe(false);
-    // `null` e legitimo: "nao se aplica".
-    expect(esquemaPatchConta.safeParse({ invoiceCloseDay: null }).success).toBe(true);
-  });
-
-  it("aceita apenas as situacoes de pagamento previstas", () => {
-    expect(esquemaPatchConta.safeParse({ paymentStatus: "em_dia" }).success).toBe(true);
-    expect(esquemaPatchConta.safeParse({ paymentStatus: "quase" }).success).toBe(false);
+  it("RECUSA campos de faturamento -- eles exigem billing:manage", () => {
+    // Fechamento e situacao de pagamento moram nas mesmas colunas, mas sairam
+    // deste PATCH na entrega de faturamento. Enquanto estavam aqui, quem tinha
+    // `settings:accounts` alterava dado de fatura sem ter `billing:manage`:
+    // duas portas para o mesmo campo, com exigencias diferentes.
+    //
+    // O `.strict()` e o que fecha a porta, e este teste e o que impede alguem
+    // de reabri-la por conveniencia.
+    expect(esquemaPatchConta.safeParse({ invoiceCloseDay: 10 }).success).toBe(false);
+    expect(esquemaPatchConta.safeParse({ paymentStatus: "paid" }).success).toBe(false);
+    expect(esquemaPatchConta.safeParse({ invoiceDueDay: 5 }).success).toBe(false);
+    expect(esquemaPatchConta.safeParse({ billingContactEmail: "a@b.com" }).success).toBe(
+      false,
+    );
   });
 });
 

@@ -109,13 +109,18 @@ export async function listarContasAdministraveis(): Promise<ContaAdministravel[]
 
 // ------------------------------------------------------------------ escrita
 
+/**
+ * Fechamento de fatura e situacao de pagamento NAO estao aqui.
+ *
+ * Eles moram nas mesmas colunas, e sao escritos por `lib/queries/billing.ts`,
+ * atras de `billing:manage`. Manter uma segunda via de escrita neste modulo --
+ * que exige apenas `settings:accounts` -- anularia essa exigencia.
+ */
 export type AtualizacaoDeConta = {
   alias?: string | null;
   businessUnit?: string | null;
   costCenter?: string | null;
   environment?: string | null;
-  invoiceCloseDay?: number | null;
-  paymentStatus?: string | null;
 };
 
 /**
@@ -155,25 +160,14 @@ export async function salvarConfiguracaoDaConta(
   await query(
     `
     INSERT INTO app_account_settings (
-      account_id, alias, business_unit, cost_center, environment,
-      invoice_close_day, payment_status, payment_status_updated_at
+      account_id, alias, business_unit, cost_center, environment
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $8 THEN now() ELSE NULL END)
+    VALUES ($1, $2, $3, $4, $5)
     ON CONFLICT (account_id) DO UPDATE SET
-      alias             = CASE WHEN $9  THEN EXCLUDED.alias             ELSE app_account_settings.alias             END,
-      business_unit     = CASE WHEN $10 THEN EXCLUDED.business_unit     ELSE app_account_settings.business_unit     END,
-      cost_center       = CASE WHEN $11 THEN EXCLUDED.cost_center       ELSE app_account_settings.cost_center       END,
-      environment       = CASE WHEN $12 THEN EXCLUDED.environment       ELSE app_account_settings.environment       END,
-      invoice_close_day = CASE WHEN $13 THEN EXCLUDED.invoice_close_day ELSE app_account_settings.invoice_close_day END,
-      payment_status    = CASE WHEN $8  THEN EXCLUDED.payment_status    ELSE app_account_settings.payment_status    END,
-      -- O carimbo so anda quando a SITUACAO muda de fato. Reescrever a data a
-      -- cada salvamento faria "atualizado ha 2 minutos" mentir sobre um campo
-      -- que ninguem tocou.
-      payment_status_updated_at = CASE
-        WHEN $8 AND app_account_settings.payment_status IS DISTINCT FROM EXCLUDED.payment_status
-          THEN now()
-        ELSE app_account_settings.payment_status_updated_at
-      END,
+      alias         = CASE WHEN $6 THEN EXCLUDED.alias         ELSE app_account_settings.alias         END,
+      business_unit = CASE WHEN $7 THEN EXCLUDED.business_unit ELSE app_account_settings.business_unit END,
+      cost_center   = CASE WHEN $8 THEN EXCLUDED.cost_center   ELSE app_account_settings.cost_center   END,
+      environment   = CASE WHEN $9 THEN EXCLUDED.environment   ELSE app_account_settings.environment   END,
       updated_at = now()
     `,
     [
@@ -182,14 +176,10 @@ export async function salvarConfiguracaoDaConta(
       limpar(dados.businessUnit),
       limpar(dados.costCenter),
       limpar(dados.environment),
-      dados.invoiceCloseDay ?? null,
-      limpar(dados.paymentStatus),
-      informado("paymentStatus"),
       informado("alias"),
       informado("businessUnit"),
       informado("costCenter"),
       informado("environment"),
-      informado("invoiceCloseDay"),
     ],
   );
 

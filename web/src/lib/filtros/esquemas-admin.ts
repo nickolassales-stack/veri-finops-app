@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { PAGAMENTOS } from "@/lib/admin/pagamentos";
 import { MIN_TAMANHO_SENHA } from "@/lib/auth/password.mjs";
 import { PERMISSOES } from "@/lib/auth/permissoes";
 import { PAPEIS } from "@/lib/auth/tipos";
@@ -31,12 +30,17 @@ const textoOpcional = (max: number) =>
 // ------------------------------------------------------------------- contas
 
 /**
- * `PAGAMENTOS` vem de `@/lib/admin/pagamentos` e NAO e definido aqui.
+ * IDENTIDADE da conta -- e so isso.
  *
- * Este arquivo importa `password.mjs`, que executa `promisify(scrypt)` ao ser
- * avaliado. Um componente de cliente que importasse a lista daqui arrastaria
- * `node:crypto` para o bundle do navegador e quebraria a tela. Ver o comentario
- * no proprio `pagamentos.ts`.
+ * `invoiceCloseDay` e `paymentStatus` SAIRAM daqui na entrega de faturamento.
+ * Eles moram nas mesmas colunas, mas passaram a ser editados por
+ * `/api/billing/settings` e `/api/billing/status`, que exigem `billing:manage`.
+ *
+ * O motivo e de permissao, nao de arrumacao: enquanto o dia de fechamento
+ * estava neste PATCH, quem tinha `settings:accounts` alterava dado de
+ * faturamento sem ter `billing:manage`. Duas portas para o mesmo campo, com
+ * exigencias diferentes, e um buraco que so aparece quando alguem usa a porta
+ * errada -- e a tela de faturamento afirma que o registro tem dono.
  */
 export const esquemaPatchConta = z
   .object({
@@ -44,10 +48,6 @@ export const esquemaPatchConta = z
     businessUnit: textoOpcional(120).optional(),
     costCenter: textoOpcional(120).optional(),
     environment: textoOpcional(60).optional(),
-    invoiceCloseDay: z
-      .union([z.number().int().min(1).max(31), z.null()])
-      .optional(),
-    paymentStatus: z.union([z.enum(PAGAMENTOS), z.null()]).optional(),
   })
   .strict()
   // PATCH vazio nao e erro de sintaxe, mas e quase certamente erro de uso: a

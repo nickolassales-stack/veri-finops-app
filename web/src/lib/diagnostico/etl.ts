@@ -7,14 +7,9 @@
  * as 05:01, e nao da para esperar amanhecer para conferir.
  */
 
-import {
-  diaEm,
-  diasEntre,
-  mesesEntre,
-  passouDaHora,
-  ultimaEsperada,
-  type AgendaEtl,
-} from "./agenda";
+import { diaEm, diasEntre, mesesEntre } from "@/lib/tempo/calendario";
+
+import { passouDaHora, ultimaEsperada, type AgendaEtl } from "./agenda";
 
 // ---------------------------------------------------------------- execucao
 

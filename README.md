@@ -45,6 +45,7 @@ Telas atrás de login, alimentadas pelo PostgreSQL do FinOps:
 | **Visão executiva** | `/dashboard` | `dashboard:view` | KPIs do período, custo por conta, maiores serviços, evolução diária, distribuição percentual |
 | **Analítico · por serviço** | `/dashboard/analitico` | `analytic:view` | Tabela paginada de lançamentos, com filtros e **exportação CSV/XLSX** |
 | **Analítico · por custo mensal** | `/dashboard/analitico/custos` | `analytic:view` | Histórico mensal por conta, com variação e participação. Exportação exige `analytic:export` |
+| **Faturamento** | `/dashboard/billing` | `billing:view` | Fechamento, vencimento, avisos e situação de pagamento. Editar exige `billing:manage` |
 | **Configurações** | `/dashboard/configuracoes` | `settings:view` | Alias de contas, usuários, grupos e permissões |
 | **Diagnóstico** | `/dashboard/diagnostico` | `diagnostics:view` | Se o ETL rodou, quando, o que trouxe, frescor por conta, alertas e saúde do banco |
 | **Minha conta** | `/conta` | sessão | Troca de senha |
@@ -556,6 +557,144 @@ a resolução é memoizada por requisição, não por sessão.
 
 ---
 
+## 5.1 Faturamento
+
+Tela `/dashboard/billing`. Responde três perguntas: **quando a fatura de cada
+conta fecha**, **quando vence**, e **o que se sabe sobre o pagamento**.
+
+> **A terceira pergunta não tem resposta automática.** O portal lê CUR/Data
+> Export, que informa o que foi **consumido** — nunca o que foi **quitado**.
+> Toda situação de pagamento aqui foi digitada por uma pessoa, e a tela mostra
+> **quem afirmou** ao lado do que foi afirmado. Ver "Limitações" abaixo.
+
+| | `billing:view` | `billing:manage` |
+|---|---|---|
+| Ver a tela e as APIs | ✔ | ✔ |
+| Configurar fechamento/vencimento | | ✔ |
+| Registrar situação de pagamento | | ✔ |
+
+Os grupos padrão já vêm com **Administradores** (as duas) e **Financeiro**
+(apenas `billing:view`).
+
+### Como configurar o fechamento da fatura
+
+Em `/dashboard/billing`, no bloco da conta:
+
+| Campo | O que faz |
+|---|---|
+| **Dia de fechamento** | 1 a 31. Sem ele, **nenhum aviso é possível** e a conta aparece como "Sem configuração" |
+| **Dia de vencimento** | 1 a 31. Se for **menor ou igual** ao de fechamento, entende-se como o mês seguinte |
+| **Avisar com antecedência de** | 0 a 30 dias. `0` avisa apenas no dia do fechamento |
+| **Contato de cobrança** | Guardado e exibido. **O portal não envia e-mail** |
+
+Duas regras que valem a pena conhecer, porque decidem datas:
+
+- **Dia 31 em mês curto** vale como o **último dia do mês** — 28 ou 29 em
+  fevereiro, 30 em abril. Empurrar para o 1º do mês seguinte mudaria a fatura de
+  mês; ignorar deixaria a conta sem fechamento quatro vezes por ano.
+- **Vencimento antes do fechamento** (fecha dia 25, vence dia 10) é lido como o
+  mês seguinte. Sem essa regra, a configuração mais comum do mercado produziria
+  vencimento no passado e a tela chamaria de vencida toda fatura recém-fechada.
+
+Tudo é calculado em `APP_TZ` (America/Sao_Paulo), e **nada disso é armazenado**:
+"fecha em 3 dias" vira "fecha em 2 dias" sozinho à meia-noite. Gravar a frase
+criaria um valor que envelhece no banco.
+
+### Como usar o status manual de pagamento
+
+| Situação | Quando usar |
+|---|---|
+| **Não informado** (`unknown`) | O padrão. Ninguém afirmou nada — é o estado inicial de toda conta |
+| **Pendente** (`pending`) | A fatura fechou e o pagamento não foi confirmado |
+| **Pago** (`paid`) | Alguém confirmou. **Exige a data em que o pagamento ocorreu** |
+| **Vencido** (`overdue`) | Passou do vencimento sem confirmação |
+| **Revisão manual** (`manual_review`) | Divergência, contestação ou acordo à parte. Sai dos contadores de cobrança |
+
+Três comportamentos deliberados:
+
+1. **"Pago" sem data é recusado** — pela tela, pelo Zod e pelo `CHECK` do banco.
+   Afirmar pagamento sem saber quando é afirmação sem evidência.
+2. **A fonte é cravada no servidor** como `manual`, e não aceita pelo corpo da
+   requisição. Se viesse do cliente, uma requisição forjada faria um valor
+   digitado à mão aparecer com o selo de "AWS Invoicing".
+3. **Seu e-mail é anexado à observação** ao salvar, e o carimbo de atualização só
+   anda quando a situação **muda de fato** — salvar de novo sem mudar nada não
+   rejuvenesce o registro.
+
+Campos de apoio: **referência** (número da fatura, protocolo, id da transação),
+**vencimento desta fatura** (só quando fugir da regra mensal — prorrogação,
+feriado, acordo; ele tem precedência sobre o dia configurado) e **observações**.
+
+> **Onde isso era editado antes:** o dia de fechamento e a situação de pagamento
+> ficavam em *Configurações › Contas AWS*, atrás de `settings:accounts`. Saíram
+> de lá nesta entrega. Duas portas para o mesmo campo, com exigências
+> diferentes, significavam que a permissão de faturamento não governava o dado
+> de faturamento. A tela de Configurações agora **mostra** os dois valores e
+> aponta para cá.
+
+### Avisos
+
+`/dashboard/billing` e `GET /api/billing/notifications`. São **derivados a cada
+requisição**, não gravados:
+
+| Aviso | Tom |
+|---|---|
+| Faltam X dias para o fechamento | info |
+| A fatura fecha hoje | atenção |
+| Fechou e o pagamento não está confirmado | atenção |
+| Passou do vencimento sem confirmação | **crítico** |
+| Conta sem dia de fechamento configurado | info |
+
+Lista vazia quer dizer *"conferido e sem pendência"*, nunca *"ninguém olhou"* —
+por isso falta de configuração vira aviso próprio em vez de virar silêncio.
+
+**Não há envio de e-mail nem Slack**, e a tela diz isso por extenso. Não existe
+provedor configurado no portal; a única saída externa é a cotação do Banco
+Central. A estrutura para um canal futuro está em `CanalDeAviso`
+(`web/src/lib/billing/notificacoes.ts`): implementar a interface, registrar em
+`CANAIS` e criar uma tabela de "já enviado" — que **ainda não existe**, porque
+criar tabela para um envio inexistente é adivinhar o formato do problema antes
+de tê-lo.
+
+### Limitações da automação de pagamento
+
+1. **O CUR / Data Export não responde sobre pagamento.** Ele informa consumo e
+   custo. Nenhuma coluna dele diz se a fatura foi paga.
+2. **As APIs de faturamento da AWS expõem faturas emitidas, não quitação.**
+   Pagamento por boleto, transferência ou reseller acontece fora da AWS.
+3. **Conta filha de uma organização não é faturada individualmente** — a fatura
+   é da conta pagadora. Status por conta filha é, na melhor hipótese, um rateio.
+4. **O portal não tem credencial AWS**, por decisão de arquitetura. Habilitar a
+   integração exige papel IAM, egress liberado e revalidação do isolamento atual.
+5. **Enquanto isso não for validado com uma fatura real conhecida, todo status é
+   manual** — e a tela sempre mostra a fonte ao lado do status.
+
+### Como validar a integração futura com a AWS Invoicing
+
+Investigação completa, com a **política IAM** pronta e o roteiro de validação:
+**[`docs/AWS-INVOICING.md`](docs/AWS-INVOICING.md)**. Em resumo:
+
+```
+invoicing:ListInvoiceSummaries   invoicing:GetInvoiceSummary
+ce:GetCostAndUsage
+organizations:DescribeOrganization   organizations:ListAccounts
+```
+
+Somente leitura, executadas **a partir da conta pagadora** (na conta filha não
+há fatura para consultar).
+
+O roteiro tem cinco passos, e o terceiro costuma encerrar o assunto: **veja com
+os próprios olhos o que o campo de status traz para uma fatura paga e para uma
+não paga.** Se os dois trouxerem o mesmo valor, está confirmado que a API não
+responde a pergunta.
+
+A flag `AWS_INVOICING_ENABLED` (padrão `false`) existe para que a implementação
+futura nasça desligada. **Ligá-la hoje não ativa nada**: a consulta continua
+respondendo indisponível, e `podeGravarAutomaticamente()` devolve `false` por
+escrito — nenhuma resposta da AWS vira `paid` sem uma pessoa no meio.
+
+---
+
 ## 6. Como rodar local
 
 **Escrevendo código** — servidor de desenvolvimento, com Fast Refresh:
@@ -658,13 +797,18 @@ docker exec -i finops-postgres \
   psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
   < /opt/veri-finops/scripts/migrations/003-diagnostico-etl.sql
 
-# 8. variáveis
+# 8. faturamento (migração 004) -- aditiva, uma vez; idempotente
+docker exec -i finops-postgres \
+  psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
+  < /opt/veri-finops/scripts/migrations/004-billing-fechamento-pagamento.sql
+
+# 9. variáveis
 cp /opt/veri-finops/infra/.env.example /opt/finops/.env
 chmod 600 /opt/finops/.env
 sudo vi /opt/finops/.env        # APP_BUILD_CONTEXT, APP_PG_USER, APP_PG_PASSWORD
 unset APP_PG_PASSWORD
 
-# 9. subir SOMENTE o portal
+# 10. subir SOMENTE o portal
 /opt/veri-finops/scripts/finops-app.sh up
 ```
 
@@ -929,6 +1073,13 @@ caminho que possa divergir.
 | "Mês sem carga no meio da série" | Partição do Athena não adicionada para aquele mês | `add_partition.sql` na EC2, depois reexecute a carga. O alerta ignora as pontas de propósito — só acusa buraco no meio |
 | `403 sem-permissao` | Falta a permissão que a rota exige | Esperado. A resposta e a tela `/sem-permissao` **nomeiam** a permissão; conceda-a a um grupo do usuário em Configurações › Permissões |
 | Concedi a permissão e a pessoa continua sem acesso | A resolução é memoizada **por requisição**; a aba aberta ainda usa a anterior | Recarregar a página basta. Se persistir: o grupo está inativo, ou o vínculo usuário-grupo não foi salvo |
+| Faturamento responde erro, resto do portal íntegro | Migração 004 não aplicada | Rode `scripts/migrations/004-billing-fechamento-pagamento.sql`. A checagem é refeita a cada 30 s, sem reiniciar |
+| Não consigo mais editar fechamento em Configurações › Contas | Esperado desde a entrega de faturamento | Os campos passaram para `/dashboard/billing`, atrás de `billing:manage`. Configurações mostra os valores e aponta para lá |
+| "Pago" é recusado | Falta a data do pagamento | Obrigatória. Recusada em três camadas: tela, Zod e `CHECK` do banco |
+| A situação de pagamento não muda de data ao salvar | Comportamento deliberado | O carimbo só anda quando a **situação** muda. Salvar sem alterar não rejuvenesce o registro |
+| Fatura marcada como vencida logo após fechar | Dia de vencimento **menor** que o de fechamento, sem a leitura de mês seguinte | Confira os dois dias na tela. A regra já trata esse caso; se persistir, há um vencimento registrado à mão na fatura, que tem precedência |
+| Configurei o dia 31 e a fatura fechou dia 28 | Correto em fevereiro | O dia 31 vale como o último dia do mês. Ver seção 5.1 |
+| Ninguém recebeu e-mail do aviso | O portal não envia e-mail | Não há provedor configurado, e a tela declara isso. O contato de cobrança é apenas guardado |
 | Área de configurações responde erro, resto do portal íntegro | Migração 002 não aplicada | Rode `scripts/migrations/002-admin-configuracoes.sql`. O portal **não** cai por isso: sem a tabela, o alias volta a `account_name` e o menu esconde a seção |
 | O alias não aparece nos filtros nem nas exportações | Migração 002 ausente, ou o campo foi salvo vazio | Campo em branco é "sem alias" de propósito, e volta ao nome do cadastro. Confira em Configurações › Contas AWS |
 | Não consigo desativar um usuário | É você mesmo, ou é o último ADMIN ativo | Comportamento deliberado: sem as duas travas, um clique deixaria o sistema sem administrador e a volta só existiria pelo banco. Promova outro antes |

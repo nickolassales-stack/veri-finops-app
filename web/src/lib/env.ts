@@ -119,6 +119,23 @@ const envSchema = z.object({
    */
   DIAGNOSTICO_DIAS_SEM_ATUALIZACAO: z.coerce.number().int().positive().max(90).default(3),
 
+  /**
+   * Integracao com as APIs de faturamento da AWS.
+   *
+   * `false` e o padrao e continua sendo o valor correto hoje: nao ha integracao
+   * implementada, o portal nao tem credencial AWS e -- o mais importante --
+   * nenhuma API da AWS responde de forma confiavel se uma fatura FOI PAGA.
+   *
+   * Ligar isto sozinho nao ativa nada: `consultarSituacaoNaAws` continua
+   * respondendo indisponivel. A variavel existe para que, no dia em que houver
+   * implementacao, ela nasca desligada em producao e precise de ato explicito.
+   * Ver docs/AWS-INVOICING.md.
+   */
+  AWS_INVOICING_ENABLED: z
+    .enum(["true", "false", "1", "0"])
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
+
   AUTH_COOKIE_SECURE: z
     .enum(["true", "false", "1", "0"])
     .default("true")

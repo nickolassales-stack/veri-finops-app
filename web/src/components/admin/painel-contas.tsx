@@ -4,13 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Aviso } from "@/components/ui/aviso";
 import { Botao } from "@/components/ui/botao";
-import { Campo, Selecao } from "@/components/ui/campo";
+import { Campo } from "@/components/ui/campo";
 import { Card } from "@/components/ui/card";
 import { CarregandoLinhas, ErroDoBloco, Vazio } from "@/components/ui/estado";
 import { escrever, ler, mensagemDoErro } from "@/lib/admin/cliente";
-// De `@/lib/admin/pagamentos`, que e puro -- e NAO de `esquemas-admin`, que
+// De `@/lib/billing/pagamento`, que e puro -- e NAO de `esquemas-admin`, que
 // puxa `password.mjs` e com ele o `node:crypto` para dentro do navegador.
-import { PAGAMENTOS, ROTULO_PAGAMENTO } from "@/lib/admin/pagamentos";
+import { ROTULO_STATUS } from "@/lib/billing/pagamento";
 
 type Conta = {
   accountId: string;
@@ -33,7 +33,7 @@ type Conta = {
  * quebrar a renderizacao inteira por uma chave que faltou no mapa.
  */
 function rotuloPagamento(valor: string): string {
-  return (ROTULO_PAGAMENTO as Record<string, string>)[valor] ?? valor;
+  return (ROTULO_STATUS as Record<string, string>)[valor] ?? valor;
 }
 
 export function PainelContas() {
@@ -160,14 +160,27 @@ function ResumoConta({ conta }: { conta: Conta }) {
   ];
 
   return (
-    <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-      {itens.map((i) => (
-        <div key={i.rotulo}>
-          <dt className="text-xs uppercase tracking-wide text-texto-suave">{i.rotulo}</dt>
-          <dd className="mt-0.5 text-sm text-veri-verde-escuro">{i.valor}</dd>
-        </div>
-      ))}
-    </dl>
+    <>
+      <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+        {itens.map((i) => (
+          <div key={i.rotulo}>
+            <dt className="text-xs uppercase tracking-wide text-texto-suave">{i.rotulo}</dt>
+            <dd className="mt-0.5 text-sm text-veri-verde-escuro">{i.valor}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {/* Os dois ultimos aparecem aqui e sao editados em Faturamento. Deixar o
+          campo editavel nas duas telas significaria que `settings:accounts`
+          altera dado de faturamento sem ter `billing:manage`. */}
+      <p className="mt-4 text-xs text-texto-suave">
+        Fechamento e situação de pagamento são editados em{" "}
+        <a href="/dashboard/billing" className="underline">
+          Faturamento
+        </a>
+        , com a permissão <span className="veri-numero">billing:manage</span>.
+      </p>
+    </>
   );
 }
 
@@ -182,10 +195,6 @@ function FormularioConta({
   const [unidade, setUnidade] = useState(conta.businessUnit ?? "");
   const [centro, setCentro] = useState(conta.costCenter ?? "");
   const [ambiente, setAmbiente] = useState(conta.environment ?? "");
-  const [fechamento, setFechamento] = useState(
-    conta.invoiceCloseDay ? String(conta.invoiceCloseDay) : "",
-  );
-  const [pagamento, setPagamento] = useState(conta.paymentStatus ?? "");
 
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -206,10 +215,6 @@ function FormularioConta({
           businessUnit: unidade.trim() || null,
           costCenter: centro.trim() || null,
           environment: ambiente.trim() || null,
-          // Campo numerico vazio vira null, nao 0: "nao informado" e diferente
-          // de "dia zero", que nem existe.
-          invoiceCloseDay: fechamento.trim() === "" ? null : Number(fechamento),
-          paymentStatus: pagamento === "" ? null : pagamento,
         },
       );
       setSucesso(true);
@@ -256,28 +261,6 @@ function FormularioConta({
           maxLength={60}
           placeholder="prod, homologacao, dev…"
         />
-        <Campo
-          rotulo="Dia de fechamento da fatura"
-          type="number"
-          min={1}
-          max={31}
-          value={fechamento}
-          onChange={(e) => setFechamento(e.target.value)}
-          ajuda="Entre 1 e 31. Deixe em branco se não se aplica."
-        />
-        <Selecao
-          rotulo="Situação de pagamento"
-          value={pagamento}
-          onChange={(e) => setPagamento(e.target.value)}
-          ajuda="A data de atualização só muda quando a situação muda."
-        >
-          <option value="">— não informado —</option>
-          {PAGAMENTOS.map((p) => (
-            <option key={p} value={p}>
-              {ROTULO_PAGAMENTO[p]}
-            </option>
-          ))}
-        </Selecao>
       </div>
 
       {erro && <ErroDoBloco titulo="Não foi possível salvar" mensagem={erro} />}
