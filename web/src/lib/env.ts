@@ -82,6 +82,43 @@ const envSchema = z.object({
     .max(1_000_000)
     .default(50_000),
 
+  /**
+   * Horario em que o ETL e esperado, no fuso de ETL_FUSO_AGENDAMENTO.
+   *
+   * O padrao reflete o CRON REAL da EC2 (`0 8 * * *` com o servidor em UTC), e
+   * nao o horario que se gostaria de ter. A tela existe para dizer a verdade
+   * sobre o pipeline; comecar com um valor otimista faria dela a primeira coisa
+   * a mentir. Para mudar o horario de fato, mude o cron -- ver docs/RUNBOOK-app.md.
+   */
+  ETL_HORARIO_ESPERADO: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "ETL_HORARIO_ESPERADO deve ser HH:MM (24h)")
+    .default("08:00"),
+
+  /**
+   * Fuso em que o AGENDADOR interpreta esse horario.
+   *
+   * `Etc/UTC` porque a EC2 esta em UTC: `0 8 * * *` dispara as 08:00 UTC, que
+   * sao 05:00 em Sao Paulo. Confundir os dois e um erro de tres horas na
+   * pergunta "ja deveria ter rodado?".
+   */
+  ETL_FUSO_AGENDAMENTO: z.string().min(1).default("Etc/UTC"),
+
+  /** Atraso tolerado antes de acusar a carga de atrasada. */
+  ETL_TOLERANCIA_MINUTOS: z.coerce.number().int().positive().max(1440).default(90),
+
+  /**
+   * Idade a partir da qual uma execucao ainda aberta e dada por interrompida.
+   * Precisa ser MAIOR que a duracao normal da carga -- hoje, segundos.
+   */
+  ETL_EXECUCAO_ORFA_MINUTOS: z.coerce.number().int().positive().max(1440).default(120),
+
+  /**
+   * Dias sem dado novo antes de acusar conta parada. O CUR da AWS atrasa cerca
+   * de um dia por natureza; 3 evita alerta falso e ainda pega conta parada.
+   */
+  DIAGNOSTICO_DIAS_SEM_ATUALIZACAO: z.coerce.number().int().positive().max(90).default(3),
+
   AUTH_COOKIE_SECURE: z
     .enum(["true", "false", "1", "0"])
     .default("true")

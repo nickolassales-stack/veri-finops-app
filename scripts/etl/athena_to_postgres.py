@@ -40,6 +40,34 @@ Agora as duas datas sao gravadas. `usage_date` continua servindo a evolucao
 diaria operacional; `billing_month`/`billing_period` passam a ser a base dos
 numeros financeiros.
 
+REGISTRO DE EXECUCAO (14/08/2026)
+---------------------------------
+O script passou a gravar o proprio historico em `app_etl_runs`: abre uma linha
+'running' no inicio e a fecha como 'success' ou 'failed' no fim, com a contagem
+de linhas de cada carga. E o que alimenta /dashboard/diagnostico.
+
+Tres regras que valem para todo esse trecho:
+
+1. MONITORAMENTO NUNCA DERRUBA O QUE ELE MONITORA. Toda falha de registro vira
+   aviso no log e a carga continua. Um erro ao anotar "comecei" jamais pode
+   impedir o custo de entrar no banco.
+2. A LINHA E ABERTA ANTES DA CARGA. Gravar so o resultado no final seria mais
+   simples e esconderia exatamente o caso que interessa: a execucao que morreu
+   no meio ficaria indistinguivel da que nunca comecou.
+3. MENSAGEM DE ERRO E SANITIZADA. Vai a mensagem da excecao, curta e com
+   segredo redigido -- nunca o traceback, que carrega variavel de ambiente.
+
+Pre-requisito: migracao 003. Sem ela o script avisa uma vez por execucao e
+carrega normalmente.
+
+Variaveis opcionais:
+
+    ETL_SOURCE        'cron' | 'manual' | 'unknown' (padrao)
+    ETL_RUN_ID        adota uma execucao ja aberta por quem chamou
+    ETL_LOG_PATH      caminho do log, guardado junto da execucao
+    ETL_ORFA_MINUTOS  idade a partir da qual uma execucao aberta e dada por
+                      interrompida (padrao 120)
+
 O QUE NAO MUDOU (de proposito)
 ------------------------------
 - As chaves dos ON CONFLICT. Conferido no CUR: cada tuplo
@@ -55,12 +83,14 @@ O QUE NAO MUDOU (de proposito)
 """
 
 import os
+import re
 import time
 from io import StringIO
 
 import boto3
 import pandas as pd
 import psycopg2
+import psycopg2.errors
 
 REGION = os.getenv("AWS_REGION", "us-east-2")
 BUCKET = os.getenv("FINOPS_BUCKET", "finops-aws-cost-datalake-800168045394")
@@ -122,6 +152,164 @@ def get_pg_connection():
     )
 
 
+# ============================================================================
+# Registro de execucao em app_etl_runs
+# ============================================================================
+
+ETL_SOURCE = os.getenv("ETL_SOURCE", "unknown")
+ETL_LOG_PATH = os.getenv("ETL_LOG_PATH") or None
+ETL_ORFA_MINUTOS = int(os.getenv("ETL_ORFA_MINUTOS", "120"))
+
+FONTES_VALIDAS = ("manual", "cron", "unknown")
+
+# Padroes redigidos antes de qualquer mensagem ir para o banco. A lista nao
+# precisa ser exaustiva para valer a pena: ela cobre a forma como o segredo
+# REALMENTE aparece numa excecao de psycopg2/boto3 -- na string de conexao e no
+# eco de variavel de ambiente.
+_REDACOES = (
+    (re.compile(r"(password\s*=\s*)(\S+)", re.I), r"\1***"),
+    (re.compile(r"(PG_PASSWORD\s*[=:]\s*)(\S+)", re.I), r"\1***"),
+    # usuario:senha@host em URI de conexao
+    (re.compile(r"://([^:/\s]+):([^@/\s]+)@"), r"://\1:***@"),
+    # chave de acesso AWS, que aparece em erro de credencial do boto3
+    (re.compile(r"\b(AKIA|ASIA)[0-9A-Z]{16}\b"), "***"),
+    (re.compile(r"(aws_secret_access_key\s*[=:]\s*)(\S+)", re.I), r"\1***"),
+)
+
+LIMITE_MENSAGEM = 500
+
+
+def sanitizar_erro(erro) -> str:
+    """Mensagem curta, de uma linha e sem segredo.
+
+    Deliberadamente NAO usa traceback.format_exc(): o traceback traz o quadro
+    local da chamada, e o quadro de `get_pg_connection` inclui a senha. O que o
+    diagnostico precisa e do tipo e da mensagem -- o resto esta no log da EC2,
+    que fica no servidor e nao passa pela aplicacao.
+    """
+    texto = f"{type(erro).__name__}: {erro}".strip()
+    for padrao, troca in _REDACOES:
+        texto = padrao.sub(troca, texto)
+    texto = " ".join(texto.split())
+    if len(texto) > LIMITE_MENSAGEM:
+        texto = texto[: LIMITE_MENSAGEM - 1] + "…"
+    return texto
+
+
+def _registrar(operacao, *args):
+    """Executa uma escrita de bookkeeping, engolindo qualquer falha.
+
+    Conexao propria e autocommit: o registro precisa sobreviver ao rollback da
+    carga. Se a transacao do 'failed' morresse junto com a transacao que falhou,
+    a tela mostraria "executando" para sempre justamente quando deu errado.
+    """
+    try:
+        conn = get_pg_connection()
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cur:
+                return operacao(cur, *args)
+        finally:
+            conn.close()
+    except psycopg2.errors.UndefinedTable:
+        print(
+            "AVISO: tabela app_etl_runs ausente -- rode "
+            "scripts/migrations/003-diagnostico-etl.sql. A carga continua normalmente."
+        )
+    except Exception as err:  # noqa: BLE001 - bookkeeping nao pode derrubar a carga
+        print(f"AVISO: falha ao registrar status do ETL ({sanitizar_erro(err)}). A carga continua.")
+    return None
+
+
+def fechar_execucoes_orfas():
+    """Fecha execucoes abertas ha tempo demais como 'failed'.
+
+    E a autocorrecao do bookkeeping: quando o processo morre de forma que nao
+    permite gravar nada (OOM, kill -9, reboot), a linha fica 'running' para
+    sempre. Quem conserta e a execucao SEGUINTE -- ninguem precisa de acesso ao
+    banco para isso, e nao ha um segundo lugar guardando credencial.
+    """
+
+    def operacao(cur):
+        cur.execute(
+            """
+            UPDATE app_etl_runs
+               SET status        = 'failed',
+                   finished_at   = now(),
+                   error_message = coalesce(error_message,
+                                            'Execucao interrompida: nao foi encerrada e '
+                                            'uma nova execucao comecou.')
+             WHERE status = 'running'
+               AND started_at < now() - make_interval(mins => %s)
+            """,
+            (ETL_ORFA_MINUTOS,),
+        )
+        return cur.rowcount
+
+    fechadas = _registrar(operacao)
+    if fechadas:
+        print(f"AVISO: {fechadas} execucao(oes) anterior(es) marcada(s) como interrompida(s).")
+
+
+def abrir_execucao():
+    """Abre a linha 'running' e devolve o id, ou None se nao foi possivel.
+
+    Se `ETL_RUN_ID` vier no ambiente, ADOTA a execucao que o chamador ja abriu
+    em vez de criar outra -- e assim que o wrapper e este script contam a mesma
+    execucao uma vez so.
+    """
+    adotada = os.getenv("ETL_RUN_ID")
+    if adotada:
+        try:
+            print(f"Registrando na execucao ja aberta: {int(adotada)}")
+            return int(adotada)
+        except ValueError:
+            print(f"AVISO: ETL_RUN_ID invalido ({adotada!r}); abrindo execucao propria.")
+
+    fonte = ETL_SOURCE if ETL_SOURCE in FONTES_VALIDAS else "unknown"
+    if fonte != ETL_SOURCE:
+        print(f"AVISO: ETL_SOURCE {ETL_SOURCE!r} desconhecido; registrando como 'unknown'.")
+
+    def operacao(cur):
+        cur.execute(
+            """
+            INSERT INTO app_etl_runs (started_at, status, source, log_path)
+            VALUES (now(), 'running', %s, %s)
+            RETURNING id
+            """,
+            (fonte, ETL_LOG_PATH),
+        )
+        return cur.fetchone()[0]
+
+    run_id = _registrar(operacao)
+    if run_id:
+        print(f"Execucao registrada: id={run_id} source={fonte}")
+    return run_id
+
+
+def fechar_execucao(run_id, status, monthly_rows=None, daily_rows=None, erro=None):
+    """Fecha a execucao com o resultado. Sem id, nao ha o que fechar."""
+    if run_id is None:
+        return
+
+    def operacao(cur):
+        cur.execute(
+            """
+            UPDATE app_etl_runs
+               SET status        = %s,
+                   finished_at   = now(),
+                   monthly_rows  = coalesce(%s, monthly_rows),
+                   daily_rows    = coalesce(%s, daily_rows),
+                   error_message = %s
+             WHERE id = %s
+            """,
+            (status, monthly_rows, daily_rows, erro, run_id),
+        )
+        return cur.rowcount
+
+    _registrar(operacao)
+
+
 def load_monthly_costs():
     """Carga mensal, agora agrupada pelo PERIODO DE COBRANCA.
 
@@ -148,7 +336,9 @@ def load_monthly_costs():
     print(f"Monthly rows: {len(df)}")
 
     if df.empty:
-        return
+        # Zero e um resultado, nao a ausencia de um: registrar 0 distingue "o
+        # Athena nao devolveu nada" de "a carga nem chegou aqui" (que fica NULL).
+        return 0
 
     conn = get_pg_connection()
     try:
@@ -190,6 +380,8 @@ def load_monthly_costs():
     finally:
         conn.close()
 
+    return len(df)
+
 
 def load_daily_costs():
     """Carga diaria: mantem a data de uso E passa a gravar o periodo de cobranca.
@@ -221,7 +413,7 @@ def load_daily_costs():
     print(f"Daily rows: {len(df)}")
 
     if df.empty:
-        return
+        return 0
 
     conn = get_pg_connection()
     try:
@@ -261,9 +453,28 @@ def load_daily_costs():
     finally:
         conn.close()
 
+    return len(df)
+
 
 if __name__ == "__main__":
     print("Starting FinOps ETL...")
-    load_monthly_costs()
-    load_daily_costs()
+
+    fechar_execucoes_orfas()
+    execucao = abrir_execucao()
+
+    mensais = None
+    diarias = None
+    try:
+        mensais = load_monthly_costs()
+        diarias = load_daily_costs()
+    except Exception as err:
+        # As contagens ja conhecidas vao junto: saber que o mensal carregou 50
+        # linhas e o diario nem comecou e metade do diagnostico.
+        fechar_execucao(execucao, "failed", mensais, diarias, sanitizar_erro(err))
+        print("FinOps ETL FAILED.")
+        # Repropagado de proposito: o codigo de saida e o log continuam sendo a
+        # fonte de verdade para o cron. O registro e um espelho, nao um substituto.
+        raise
+
+    fechar_execucao(execucao, "success", mensais, diarias)
     print("FinOps ETL finished.")

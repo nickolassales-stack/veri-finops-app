@@ -142,7 +142,7 @@ npm run dev        # ou: npm start, para exercitar o build de produção
 | Botão **Sair** | Volta para `/login`, apaga a linha em `app_sessions` e o cookie |
 | `/conta` → trocar senha | Senha atual errada é recusada; troca válida confirma sucesso e mantém a sessão |
 | 5 senhas erradas seguidas | Bloqueio de 5 minutos para aquele e-mail + IP |
-| `/diagnostico` com perfil `VIEWER` | Redireciona para `/sem-permissao` |
+| `/dashboard/diagnostico` com perfil `VIEWER` | Redireciona para `/sem-permissao` |
 
 Conferir no banco:
 
@@ -155,7 +155,7 @@ SELECT user_id, expires_at, last_seen_at FROM app_sessions;   -- vazia após log
 
 | Perfil | Acesso |
 |---|---|
-| `ADMIN` | Tudo, incluindo `/diagnostico` (estrutura do banco e privilégios) |
+| `ADMIN` | Tudo, incluindo `/dashboard/diagnostico` (saúde do ETL, estrutura do banco e privilégios) |
 | `VIEWER` | Visão executiva e analítico |
 
 Esconder o link de navegação **não** é a proteção: a autorização é aplicada por
@@ -227,9 +227,12 @@ src/
     (privado)/
       layout.tsx             FRONTEIRA DE AUTENTICAÇÃO: requireSessao()
       dashboard/             visão executiva
-      dashboard/analitico/   analítico: tabela paginada no servidor
+      dashboard/analitico/   analítico por serviço: tabela paginada no servidor
+      dashboard/analitico/custos/  analítico por custo mensal (período de cobrança)
+      dashboard/configuracoes/     área administrativa (settings:*)
+      dashboard/diagnostico/ saúde do ETL, frescor da carga e do banco
       conta/                 dados da sessão e troca de senha
-      diagnostico/           somente ADMIN
+      diagnostico/           redirecionamento para a rota acima (link antigo)
       sem-permissao/         403 de perfil insuficiente
     api/
       health/route.ts        usado pelo HEALTHCHECK do container (público)
@@ -238,6 +241,7 @@ src/
                              daily-by-service, analytic
       exchange-rate/         cotação USD/BRL
       export/                csv e xlsx do recorte atual (devolvem ARQUIVO)
+      diagnostics/           etl, accounts, data-freshness (diagnostics:view)
   components/
     layout/                  header (logo, usuário, sair), nav, footer
     dashboard/               painel executivo, barra de filtros, cards de KPI
@@ -258,6 +262,9 @@ src/
       client.ts              pool pg, timeouts, checagem de saúde
       sql.ts                 ConstrutorParams, escape de LIKE, lista fechada
       tipos-pg.ts            date → string; timestamp → UTC (ver achado 7 do schema)
+    diagnostico/
+      agenda.ts              quando o ETL deveria rodar (PURO): fuso do cron × fuso da tela
+      etl.ts                 situação e alertas do pipeline + redação de segredo (PURO)
     filtros/
       periodo.ts             resolução de período (PURO, testável)
       esquemas.ts            validação Zod de tudo que chega pela URL

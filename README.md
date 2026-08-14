@@ -43,9 +43,10 @@ Telas atrás de login, alimentadas pelo PostgreSQL do FinOps:
 | Tela | Rota | Exige | O que faz |
 |---|---|---|---|
 | **Visão executiva** | `/dashboard` | `dashboard:view` | KPIs do período, custo por conta, maiores serviços, evolução diária, distribuição percentual |
-| **Analítico** | `/dashboard/analitico` | `analytic:view` | Tabela paginada de lançamentos, com filtros e **exportação CSV/XLSX** |
+| **Analítico · por serviço** | `/dashboard/analitico` | `analytic:view` | Tabela paginada de lançamentos, com filtros e **exportação CSV/XLSX** |
+| **Analítico · por custo mensal** | `/dashboard/analitico/custos` | `analytic:view` | Histórico mensal por conta, com variação e participação. Exportação exige `analytic:export` |
 | **Configurações** | `/dashboard/configuracoes` | `settings:view` | Alias de contas, usuários, grupos e permissões |
-| **Diagnóstico** | `/diagnostico` | `diagnostics:view` | Última carga do ETL, cobertura do dado, saúde do banco |
+| **Diagnóstico** | `/dashboard/diagnostico` | `diagnostics:view` | Se o ETL rodou, quando, o que trouxe, frescor por conta, alertas e saúde do banco |
 | **Minha conta** | `/conta` | sessão | Troca de senha |
 
 **Autorização por permissão, não por papel.** `ADMIN` continua podendo tudo, mas
@@ -143,6 +144,167 @@ AWS Cost Explorer / CUR
 do código: o role `finops_app` tem **`SELECT` e nada mais** em `aws_daily_costs`
 e `aws_monthly_costs` — a barreira é do banco
 (ver [scripts/create-app-role.sql](scripts/create-app-role.sql)).
+
+### Como o ETL é monitorado
+
+O ETL é um script Python na EC2, disparado pelo cron, **fora do compose e fora
+do portal**. O portal não o executa nem o supervisiona: ele apenas lê o rastro
+que a carga deixa.
+
+Esse rastro é a tabela `app_etl_runs` (migração 003). O próprio ETL abre uma
+linha `running` quando começa e a fecha como `success` ou `failed` quando
+termina, gravando quantas linhas cada carga trouxe.
+
+| | |
+|---|---|
+| **Quem escreve** | o ETL, como `finops_user` |
+| **Quem lê** | o portal, como `finops_app`, com **`SELECT` e nada mais** |
+| **Onde aparece** | `/dashboard/diagnostico` e `GET /api/diagnostics/etl` |
+
+A assimetria de privilégio é o ponto. Se o portal pudesse escrever ali, *"o ETL
+rodou"* passaria a ser uma afirmação que a própria aplicação fabrica — e a tela
+que existe para provar o estado do pipeline deixaria de provar coisa alguma. É a
+mesma barreira já aplicada às tabelas de custo.
+
+**Três regras da instrumentação:**
+
+1. **Monitorar não pode derrubar o que é monitorado.** Toda falha de registro
+   vira aviso no log e a carga segue. Sem a migração 003, o ETL avisa uma vez por
+   execução e **carrega normalmente**.
+2. **A linha é aberta antes da carga.** Gravar só o resultado no fim seria mais
+   simples e esconderia justamente o caso que interessa: execução morta no meio
+   ficaria indistinguível de execução que nunca começou.
+3. **Mensagem de erro é sanitizada** na escrita e redigida de novo na leitura.
+   Vai a mensagem da exceção, curta e com segredo mascarado — nunca o traceback,
+   que carrega variável de ambiente.
+
+**Execução que morre sem conseguir gravar nada** (OOM, `kill -9`, reboot) deixa a
+linha aberta para sempre. Duas coisas resolvem: a tela dá por interrompida
+qualquer execução aberta há mais de `ETL_EXECUCAO_ORFA_MINUTOS`, e a carga
+**seguinte** fecha o registro sozinha. Ninguém precisa de acesso ao banco para
+consertar bookkeeping.
+
+#### O horário esperado é declarado, não descoberto
+
+> **O cron dispara às 08:00 UTC, que são 05:00 em São Paulo.** A EC2 está em
+> `Etc/UTC` e a linha do cron é `0 8 * * *`. Não são 8h da manhã no horário de
+> Brasília, e essa diferença de três horas já era assim antes desta entrega.
+
+O portal roda em container sem acesso ao host, então não tem como ler o crontab.
+O horário esperado vem de variável de ambiente, e o padrão foi escolhido para
+bater com o cron real:
+
+| Variável | Padrão | Para que serve |
+|---|---|---|
+| `ETL_HORARIO_ESPERADO` | `08:00` | hora do agendamento |
+| `ETL_FUSO_AGENDAMENTO` | `Etc/UTC` | fuso em que **o agendador** entende essa hora |
+| `ETL_TOLERANCIA_MINUTOS` | `90` | atraso aceito antes de acusar |
+| `ETL_EXECUCAO_ORFA_MINUTOS` | `120` | idade que torna uma execução aberta "interrompida" |
+| `DIAGNOSTICO_DIAS_SEM_ATUALIZACAO` | `3` | dias sem dado novo antes de acusar conta parada |
+
+A tela mostra os dois: *"08:00 em Etc/UTC"* e a próxima execução convertida para
+o fuso de quem lê. **Mudar a variável não muda o cron** — muda apenas o que a
+tela afirma. Para mudar de verdade, veja "Como ajustar o cron" abaixo.
+
+#### Como consultar o status
+
+```bash
+# pela tela (o caminho normal)
+/dashboard/diagnostico
+
+# por script / monitoração externa: 'saudavel' é exatamente "sem alerta crítico"
+curl -s -H "cookie: veri_finops_session=$TOKEN" \
+  http://localhost:3001/api/diagnostics/data-freshness | jq '.dados.saudavel'
+
+# direto no banco, sem portal nenhum
+docker exec finops-postgres psql -U finops_user -d finops -c \
+  "SELECT id, started_at, status, source, monthly_rows, daily_rows
+     FROM app_etl_runs ORDER BY started_at DESC LIMIT 5"
+```
+
+#### Como registrar uma execução manual
+
+O caminho recomendado registra sozinho — o wrapper só informa a origem:
+
+```bash
+/opt/finops/run-etl-with-status.sh manual
+```
+
+Ele **chama** `/opt/finops/run-etl.sh` sem alterá-lo, e não guarda credencial
+nenhuma: quem tem as variáveis continua sendo o script antigo. Para uma carga
+feita por outro caminho (backfill, `psql`, reprocessamento) que ainda assim
+precise aparecer no diagnóstico:
+
+```bash
+read -rs PG_PASSWORD && export PG_PASSWORD
+ID=$(/opt/finops/register-etl-status.py --abrir --source manual)
+# ... a carga ...
+/opt/finops/register-etl-status.py --fechar "$ID" --status success --mensais 50 --diarias 915
+/opt/finops/register-etl-status.py --ultimas 5          # conferir
+/opt/finops/register-etl-status.py --fechar-orfas       # limpar execução travada
+unset PG_PASSWORD
+```
+
+#### Como ajustar o cron
+
+O agendamento vive no crontab do usuário `ubuntu`. **Backup antes, sempre** —
+`crontab -` substitui tudo de uma vez e não pergunta:
+
+```bash
+crontab -l > /opt/finops/backups/crontab-$(date +%F-%H%M).bak
+
+# mudar o HORÁRIO (exemplo: 08:00 em São Paulo = 11:00 UTC)
+crontab -l | sed 's|^0 8 |0 11 |' | crontab -
+#   e então acompanhe com ETL_HORARIO_ESPERADO=11:00 no .env do portal,
+#   senão a tela passa a cobrar a carga na hora errada.
+
+crontab -l    # CONFIRA o resultado antes de sair
+```
+
+**Rollback do cron:** `crontab /opt/finops/backups/crontab-<data>.bak`.
+
+Rollback do restante, na ordem inversa da instalação:
+
+```bash
+# 1. ETL volta à versão anterior (o backup é criado a cada publicação)
+cp /opt/finops/etl/athena_to_postgres.py.bak-<data> /opt/finops/etl/athena_to_postgres.py
+
+# 2. cron volta a chamar o script direto
+crontab /opt/finops/backups/crontab-<data>.bak
+
+# 3. banco -- DESTRÓI o histórico de execuções; faça o dump antes
+docker exec finops-postgres pg_dump -U finops_user -d finops -t app_etl_runs \
+  > /opt/finops/backups/app_etl_runs-$(date +%F-%H%M).sql
+docker exec -i finops-postgres psql -U finops_user -d finops -X -v ON_ERROR_STOP=1 \
+  < scripts/migrations/003-diagnostico-etl-rollback.sql
+```
+
+Nenhum dos três passos toca em dado de custo, no Metabase ou no compose. A tela
+de diagnóstico continua abrindo depois do rollback: ela informa que o
+monitoramento não está instalado.
+
+### Duas leituras do analítico
+
+A área analítica tem duas abas. Elas **não** são a mesma tabela com outro
+agrupamento: respondem perguntas diferentes e por isso usam critérios de data
+diferentes.
+
+| | Por serviço | Por custo mensal |
+|---|---|---|
+| Rota | `/dashboard/analitico` | `/dashboard/analitico/custos` |
+| Pergunta | o que foi consumido, e quando | quanto cada conta custou por mês |
+| Granularidade | um lançamento por dia/serviço | uma linha por (mês, conta) |
+| Critério de data | `usage_date` — **operacional** | `billing_month` — **financeiro** |
+| Fecha com o Cost Explorer | não necessariamente | **sim** |
+
+A aba por custo é a que se usa para **reconciliação financeira**. A evolução
+diária da visão executiva e a listagem por serviço seguem a data de uso e
+respondem *“em que dia isso rodou”* — legítimo, e inadequado para conferir
+fatura. Ver a seção seguinte.
+
+`/dashboard/analitico` continua sendo a visão por serviço, e não foi movida para
+`/servicos`: mover quebraria todo link, favorito e histórico já existentes em
+troca de simetria no caminho.
 
 ### Duas datas, duas perguntas diferentes
 
@@ -491,13 +653,18 @@ docker exec -i finops-postgres \
   psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
   < /opt/veri-finops/scripts/migrations/002-admin-configuracoes.sql
 
-# 7. variáveis
+# 7. monitoramento do ETL (migração 003) -- aditiva, uma vez; idempotente
+docker exec -i finops-postgres \
+  psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
+  < /opt/veri-finops/scripts/migrations/003-diagnostico-etl.sql
+
+# 8. variáveis
 cp /opt/veri-finops/infra/.env.example /opt/finops/.env
 chmod 600 /opt/finops/.env
 sudo vi /opt/finops/.env        # APP_BUILD_CONTEXT, APP_PG_USER, APP_PG_PASSWORD
 unset APP_PG_PASSWORD
 
-# 8. subir SOMENTE o portal
+# 9. subir SOMENTE o portal
 /opt/veri-finops/scripts/finops-app.sh up
 ```
 
@@ -753,7 +920,13 @@ caminho que possa divergir.
 | As telas seguem em erro 500 **depois** de aplicar a migração | Processo antigo servindo código já compilado — vale para `next dev` e para o container | Reinicie o processo. Confirme com `curl` num endpoint: se a API responde 200 e a tela não, o que está velho é o navegador ou o servidor, não o banco |
 | O total continua sem bater com o Cost Explorer | Migração aplicada, mas o backfill não rodou | `scripts/backfill-billing-period.py --aplicar --realinhar-mes`. A consulta 5 do script de reconciliação mostra a cobertura |
 | O mesmo valor aparece duas vezes na tabela mensal | Backfill rodou sem `--realinhar-mes` | Reexecute com a opção. A carga mensal insere no mês certo e a linha antiga fica no errado |
-| Tela em branco / erro 500 nas telas de dado | Banco fora, ou schema diferente do esperado | `curl localhost:3001/api/health`; `/diagnostico` (ADMIN) mostra a última carga do ETL |
+| Tela em branco / erro 500 nas telas de dado | Banco fora, ou schema diferente do esperado | `curl localhost:3001/api/health`; `/dashboard/diagnostico` mostra a última carga do ETL |
+| Diagnóstico diz "monitoramento não instalado" | Migração 003 não aplicada | Rode `scripts/migrations/003-diagnostico-etl.sql`. O portal e o ETL **não** caem por isso; a checagem é refeita a cada 30 s, sem reiniciar |
+| Diagnóstico acusa atraso e a carga rodou | O cron mudou e `ETL_HORARIO_ESPERADO` não | O horário é declarado, não lido do crontab. Compare `crontab -l` com a variável — lembrando que o cron está em **UTC** |
+| Execução presa em "Em execução" | Processo morto sem gravar o fim (OOM, reboot) | Passado `ETL_EXECUCAO_ORFA_MINUTOS`, a tela já mostra "interrompida"; a carga seguinte fecha o registro. Para agora: `register-etl-status.py --fechar-orfas` |
+| Todas as execuções aparecem como "não identificada" | O cron chama `run-etl.sh` direto, sem o wrapper | Esperado e inofensivo. Para identificar, aponte o cron para `run-etl-with-status.sh` (ver seção 3) |
+| "Sem dado no mês corrente" logo depois da virada do mês | A AWS ainda não fechou o primeiro CUR do mês | Normal nos primeiros dias. Vira problema se persistir com as outras contas já carregadas |
+| "Mês sem carga no meio da série" | Partição do Athena não adicionada para aquele mês | `add_partition.sql` na EC2, depois reexecute a carga. O alerta ignora as pontas de propósito — só acusa buraco no meio |
 | `403 sem-permissao` | Falta a permissão que a rota exige | Esperado. A resposta e a tela `/sem-permissao` **nomeiam** a permissão; conceda-a a um grupo do usuário em Configurações › Permissões |
 | Concedi a permissão e a pessoa continua sem acesso | A resolução é memoizada **por requisição**; a aba aberta ainda usa a anterior | Recarregar a página basta. Se persistir: o grupo está inativo, ou o vínculo usuário-grupo não foi salvo |
 | Área de configurações responde erro, resto do portal íntegro | Migração 002 não aplicada | Rode `scripts/migrations/002-admin-configuracoes.sql`. O portal **não** cai por isso: sem a tabela, o alias volta a `account_name` e o menu esconde a seção |

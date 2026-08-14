@@ -81,6 +81,15 @@ services:
       # dele a exportacao e recusada, nunca truncada. Ver infra/.env.example.
       EXPORT_MAX_ROWS: ${EXPORT_MAX_ROWS:-50000}
 
+      # Monitoramento do ETL. O padrao descreve o CRON REAL: `0 8 * * *` numa
+      # EC2 em Etc/UTC dispara as 08:00 UTC = 05:00 em Sao Paulo. O portal nao
+      # le o crontab -- acredita nestes valores. Ver infra/.env.example.
+      ETL_HORARIO_ESPERADO: ${ETL_HORARIO_ESPERADO:-08:00}
+      ETL_FUSO_AGENDAMENTO: ${ETL_FUSO_AGENDAMENTO:-Etc/UTC}
+      ETL_TOLERANCIA_MINUTOS: ${ETL_TOLERANCIA_MINUTOS:-90}
+      ETL_EXECUCAO_ORFA_MINUTOS: ${ETL_EXECUCAO_ORFA_MINUTOS:-120}
+      DIAGNOSTICO_DIAS_SEM_ATUALIZACAO: ${DIAGNOSTICO_DIAS_SEM_ATUALIZACAO:-3}
+
     # 3001 no host, porque 3000 e do Metabase. O padrao publica SOMENTE no
     # loopback da EC2: para validar, use tunel SSH. Para liberar a usuarios de
     # gestao, coloque Nginx + HTTPS na frente e so entao troque APP_BIND --

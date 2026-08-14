@@ -60,6 +60,10 @@ camada de visão executiva e governança.
 | `scripts/finops-app.sh` | Operação do container: `build`, `up`, `logs`, `health`, `status`, `rollback`, `down` |
 | `scripts/inspect-schema.sql` | Inspeção somente-leitura do schema |
 | `scripts/inspect-schema.sh` | Wrapper (SSH ou local) da inspeção |
+| `scripts/etl/athena_to_postgres.py` | A carga Athena → PostgreSQL, com registro de execução. **Roda na EC2, fora do compose** |
+| `scripts/run-etl-with-status.sh` | Chama o `run-etl.sh` da EC2 informando a origem. Não substitui nem guarda credencial |
+| `scripts/register-etl-status.py` | Registro manual de execução e conserto de execução travada |
+| `scripts/migrations/003-diagnostico-etl.sql` | `app_etl_runs` + view `app_data_freshness` (+ rollback) |
 
 ---
 
@@ -117,7 +121,7 @@ Princípios aplicados:
     custo é imutável pela aplicação.
 - O `GRANT` é aditivo e não destrutivo, mas ainda assim exige aprovação explícita
   antes de rodar em produção.
-- A página `/diagnostico` mostra os privilégios efetivos do usuário conectado,
+- A página `/dashboard/diagnostico` mostra os privilégios efetivos do usuário conectado,
   lidos do próprio banco — use-a para conferir o resultado do GRANT.
 
 ---
@@ -321,10 +325,118 @@ Tokens em `web/src/app/globals.css`, derivados de `docs/skill-veri.md`
 
 | Risco | Situação |
 |---|---|
-| ETL é manual (`athena_to_postgres.py`) | A aplicação exibe o dado que existe no banco; a tela precisa indicar o frescor. Automação do ETL segue pendente (já registrada na doc original) |
+| O horário exibido do ETL é **declarado**, não lido do crontab | O container não tem acesso ao host. Mudar o cron sem mudar `ETL_HORARIO_ESPERADO` faz a tela cobrar a carga na hora errada. Os dois passos andam juntos — seção 11 |
 | `postgres` não tem healthcheck no compose | `depends_on` só garante ordem de start, não prontidão. A aplicação tolera: erro de conexão vira mensagem na tela, não crash |
 | Porta 3000 já é do Metabase | A aplicação usa 3001 no host (3000 apenas dentro do container). O `.env.example` avisa explicitamente para não trocar para 3000 |
 | Senhas em texto claro no `docker-compose.yml` atual e nos `.docx` | Fora do escopo deste serviço, mas recomendada rotação e migração para `.env` em etapa própria |
 | Valor oficial é em USD; BRL é estimativa | A conversão usa a PTAX do Banco Central e é **indicativa** — não considera spread nem IOF, e nada em BRL é gravado no banco. Telas e arquivos exportados marcam isso explicitamente |
 | Exportação consome memória proporcional à BASE, não à tela | Único ponto do portal com esse comportamento. `EXPORT_MAX_ROWS` (padrão 50.000) é conferido antes de gerar e recusa com HTTP 413 acima do teto. O CSV vai em streaming; quem o teto protege é o XLSX. Se subir o teto, suba `APP_MEM_LIMIT` junto |
 | `next dev` (Turbopack) trava a tela analítica com `?busca=` na URL | **Só em desenvolvimento.** Com a seção de exportação presente, o dev server suspende a fronteira de Suspense e não a revela; o build de produção (`next build` + `server.js`, que é o que roda no container) foi verificado nas mesmas URLs e funciona. Ao validar essa tela localmente, use o build de produção |
+
+---
+
+## 11. Monitoramento do ETL
+
+O ETL **não** faz parte deste serviço: é um script Python em `/opt/finops/etl/`,
+disparado pelo cron do usuário `ubuntu`, fora do compose. O portal não o executa
+e não o supervisiona — apenas lê o rastro que ele deixa em `app_etl_runs`.
+
+### 11.1 O que está instalado na EC2
+
+| Caminho | O que é | Alterado por esta entrega |
+|---|---|---|
+| `/opt/finops/run-etl.sh` | wrapper original, com as variáveis e a senha | **não** — intocado |
+| `/opt/finops/etl/athena_to_postgres.py` | a carga | sim: passou a registrar `app_etl_runs` |
+| `/opt/finops/etl/athena_to_postgres.py.bak-<data>` | backup automático da versão anterior | criado na publicação |
+| `/opt/finops/run-etl-with-status.sh` | wrapper novo: informa a origem e chama o antigo | novo |
+| `/opt/finops/register-etl-status.py` | registro manual e conserto de execução travada | novo |
+| `crontab -l` do `ubuntu` | `0 8 * * *` apontando para o wrapper novo | sim — backup em `/opt/finops/backups/` |
+
+O wrapper novo **não guarda credencial nenhuma**. Ele exporta `ETL_SOURCE` e
+`ETL_LOG_PATH` e dá `exec` no script antigo, que continua sendo o único lugar
+com as variáveis de conexão. Um segundo lugar guardando a senha de produção
+seria um preço alto por um campo de metadado.
+
+### 11.2 Diagnóstico rápido
+
+```bash
+# 1. o que o portal está vendo
+curl -s -H "cookie: veri_finops_session=$TOKEN" \
+  http://localhost:3001/api/diagnostics/data-freshness | jq '.dados.situacao, .dados.saudavel'
+
+# 2. as últimas execuções, direto do banco
+docker exec finops-postgres psql -U finops_user -d finops -c \
+  "SELECT id, started_at, finished_at, status, source, monthly_rows, daily_rows,
+          left(coalesce(error_message,'-'), 60)
+     FROM app_etl_runs ORDER BY started_at DESC LIMIT 5"
+
+# 3. a saída bruta -- só existe aqui; o portal nunca lê o conteúdo do log
+tail -50 /opt/finops/etl.log
+
+# 4. o cron realmente instalado
+crontab -l | grep etl
+```
+
+### 11.3 Reexecutar
+
+A carga é idempotente (`ON CONFLICT ... DO UPDATE` em todas as tabelas), então
+reexecutar não duplica linha:
+
+```bash
+/opt/finops/run-etl-with-status.sh manual
+```
+
+### 11.4 Execução presa em "Em execução"
+
+Acontece quando o processo morre sem chance de gravar (OOM, `kill -9`, reboot).
+Duas coisas já resolvem sozinhas: passado `ETL_EXECUCAO_ORFA_MINUTOS` a tela
+mostra "interrompida", e a carga seguinte fecha o registro. Para resolver na
+hora:
+
+```bash
+read -rs PG_PASSWORD && export PG_PASSWORD
+/opt/finops/register-etl-status.py --fechar-orfas --minutos 120
+unset PG_PASSWORD
+```
+
+### 11.5 Mudar o horário do agendamento
+
+**São dois passos, e pular um deles faz a tela mentir.** O cron manda no
+agendamento; a variável manda no que a tela afirma esperar.
+
+```bash
+# passo 1 -- o cron (BACKUP ANTES: `crontab -` substitui tudo sem perguntar)
+crontab -l > /opt/finops/backups/crontab-$(date +%F-%H%M).bak
+crontab -l | sed 's|^0 8 |0 11 |' | crontab -     # 11:00 UTC = 08:00 em São Paulo
+crontab -l                                        # CONFIRA
+
+# passo 2 -- o portal
+sudo vi /opt/finops/.env                          # ETL_HORARIO_ESPERADO=11:00
+/opt/veri-finops/scripts/finops-app.sh up
+```
+
+Lembre que a EC2 está em `Etc/UTC`: o `0 8` de hoje dispara às 05:00 de São
+Paulo, e sempre foi assim.
+
+### 11.6 Rollback
+
+Na ordem inversa, e nenhum passo toca em dado de custo, no Metabase ou no
+compose:
+
+```bash
+# 1. ETL volta à versão anterior
+cp /opt/finops/etl/athena_to_postgres.py.bak-<data> /opt/finops/etl/athena_to_postgres.py
+
+# 2. cron volta ao script original
+crontab /opt/finops/backups/crontab-<data>.bak
+
+# 3. banco -- DESTRÓI o histórico de execuções, que não se regenera
+docker exec finops-postgres pg_dump -U finops_user -d finops -t app_etl_runs \
+  > /opt/finops/backups/app_etl_runs-$(date +%F-%H%M).sql
+docker exec -i finops-postgres psql -U finops_user -d finops -X -v ON_ERROR_STOP=1 \
+  < /opt/veri-finops/scripts/migrations/003-diagnostico-etl-rollback.sql
+```
+
+Depois do passo 3 a tela `/dashboard/diagnostico` continua abrindo: informa que
+o monitoramento não está instalado e não quebra nenhuma outra tela. O ETL também
+segue carregando — ele apenas registra um aviso por execução.
