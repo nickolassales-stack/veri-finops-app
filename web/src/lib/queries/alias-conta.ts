@@ -102,6 +102,30 @@ export function joinAlias(disponivel: boolean, amarracao: AmarracaoAlias): strin
   return `LEFT JOIN app_account_settings ${cfg} ON ${cfg}.account_id = ${amarracao.colunaId}`;
 }
 
+/**
+ * Metadados de conta com a MESMA precedencia do alias: o que o portal guarda
+ * vence o que o cadastro afirma.
+ *
+ * Sem isto, a tela de configuracoes deixaria o ADMIN corrigir o centro de custo
+ * e o filtro do historico continuaria usando o valor antigo de
+ * `cloud_accounts` -- dois numeros para a mesma pergunta.
+ */
+export type CampoDeConta = "business_unit" | "cost_center" | "environment";
+
+export function expressaoCampoDaConta(
+  disponivel: boolean,
+  campo: CampoDeConta,
+  amarracao: AmarracaoAlias,
+): string {
+  const cfg = amarracao.cfg ?? "s";
+  const degraus = [
+    ...(disponivel ? [`nullif(btrim(${cfg}.${campo}), '')`] : []),
+    ...(amarracao.cadastro ? [`nullif(btrim(${amarracao.cadastro}.${campo}), '')`] : []),
+  ];
+  // Sem nenhum degrau disponivel a expressao precisa continuar valida em SQL.
+  return degraus.length > 0 ? `coalesce(${degraus.join(", ")})` : "NULL::text";
+}
+
 /** A cascata de nomes, pronta para entrar num SELECT ou num ORDER BY. */
 export function expressaoNomeDaConta(
   disponivel: boolean,

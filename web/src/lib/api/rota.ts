@@ -186,6 +186,51 @@ export function rotaProtegidaArquivo(
 }
 
 /**
+ * Rota de ARQUIVO que exige permissao.
+ *
+ * `rotaProtegidaArquivo` mais a checagem de permissao, feita ANTES de ler
+ * qualquer parametro e antes de abrir o fluxo -- uma recusa precisa sair como
+ * JSON de erro, e depois do primeiro byte do arquivo isso ja nao seria possivel.
+ *
+ * Existe separada de `rotaComPermissao` porque o sucesso aqui nao e o envelope
+ * `{ dados, meta }`: o manipulador monta a propria `Response`, com o corpo e os
+ * cabecalhos do download.
+ */
+export function rotaComPermissaoArquivo(
+  nome: string,
+  permissao: Permissao,
+  manipulador: (ctx: ContextoRota) => Promise<Response>,
+) {
+  return async function handler(request: Request): Promise<Response> {
+    try {
+      const sessao = await getSessao();
+      if (!sessao) {
+        return respostaErro(
+          "nao-autenticado",
+          "Sessao ausente ou expirada. Entre novamente.",
+        );
+      }
+
+      const autorizacao = await getAutorizacao();
+      if (!autorizacao || !can(autorizacao, permissao)) {
+        return respostaErro(
+          "sem-permissao",
+          "Seu perfil nao tem permissao para exportar dados.",
+        );
+      }
+
+      return await manipulador({
+        url: new URL(request.url),
+        sessao,
+        tz: getEnv().APP_TZ,
+      });
+    } catch (err) {
+      return traduzirFalha(nome, err);
+    }
+  };
+}
+
+/**
  * Cabecalhos de download.
  *
  * `filename*` (RFC 5987) alem de `filename`: o nome carrega so ASCII hoje, mas
