@@ -28,7 +28,10 @@ export type LinhaAnalitica = {
    */
   billingPeriod: string;
   accountId: string;
-  accountName: string | null;
+  /** Nome JA RESOLVIDO pelo servidor: alias -> account_name -> conta-<id>. */
+  accountName: string;
+  /** `false` quando a conta tem custo mas nao esta em `cloud_accounts`. */
+  cadastrada: boolean;
   service: string;
   region: string | null;
   costUSD: number;

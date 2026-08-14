@@ -2,12 +2,20 @@ import Image from "next/image";
 import Link from "next/link";
 
 import { sair } from "@/lib/auth/actions";
+import { getAutorizacao } from "@/lib/auth/autorizacao";
+import { can } from "@/lib/auth/permissoes";
 import type { Sessao } from "@/lib/auth/session";
-import { navVisivelPara } from "@/lib/nav";
+import { navVisivelPor } from "@/lib/nav";
 
 import { MainNav } from "./main-nav";
 
-export function SiteHeader({ sessao }: { sessao: Sessao }) {
+export async function SiteHeader({ sessao }: { sessao: Sessao }) {
+  // O menu passou a depender de PERMISSAO, nao so de papel. A resolucao e feita
+  // aqui, no servidor: `nav.ts` continua puro para nao arrastar o driver `pg`
+  // para o bundle do `MainNav`, que e componente de cliente.
+  const autorizacao = await getAutorizacao();
+  const itens = navVisivelPor((p) => (autorizacao ? can(autorizacao, p) : false));
+
   return (
     <header className="border-b border-veri-offwhite bg-veri-branco">
       <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
@@ -36,8 +44,18 @@ export function SiteHeader({ sessao }: { sessao: Sessao }) {
           </span>
         </Link>
 
-        <div className="flex items-center gap-4">
-          <MainNav itens={navVisivelPara(sessao.papel)} />
+        {/*
+          `flex-wrap` aqui e nao so no container externo.
+
+          Este bloco (menu + separador + usuario + sair) era rigido e, com a
+          entrada de "Configuracoes", passou a somar 559px -- mais que os 390px
+          de um celular. O corpo inteiro ganhava rolagem horizontal, em TODAS as
+          telas, inclusive as que ja existiam antes desta entrega.
+
+          `justify-end` mantem o alinhamento a direita quando as linhas quebram.
+        */}
+        <div className="flex flex-wrap items-center justify-end gap-4">
+          <MainNav itens={itens} />
 
           <span aria-hidden className="hidden h-8 w-px bg-veri-offwhite sm:block" />
 

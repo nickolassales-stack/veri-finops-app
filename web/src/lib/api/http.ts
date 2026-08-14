@@ -19,7 +19,10 @@ export type MetaResposta = Record<string, unknown> & {
 
 export type CodigoErro =
   | "nao-autenticado"
+  | "sem-permissao"
   | "parametros-invalidos"
+  | "conflito"
+  | "nao-encontrado"
   | "consulta-excedeu-tempo"
   | "exportacao-muito-grande"
   | "banco-indisponivel"
@@ -27,7 +30,16 @@ export type CodigoErro =
 
 const STATUS_POR_CODIGO: Record<CodigoErro, number> = {
   "nao-autenticado": 401,
+  // 403 e nao 404: esconder a existencia da rota nao protege nada aqui -- os
+  // caminhos da area administrativa sao fixos e conhecidos -- e devolver 404
+  // faria quem tem acesso legitimo mas perdeu a permissao achar que a tela
+  // sumiu, em vez de entender que precisa pedir acesso.
+  "sem-permissao": 403,
   "parametros-invalidos": 400,
+  // 409: a entrada e valida, mas colide com algo que ja existe (e-mail de
+  // usuario, nome de grupo). Diferente de 400, que diz "voce escreveu errado".
+  conflito: 409,
+  "nao-encontrado": 404,
   // 413: o pedido e valido, o resultado e que nao cabe. 400 diria "voce errou o
   // parametro", que nao e o caso -- o filtro esta certo, so e largo demais.
   "exportacao-muito-grande": 413,

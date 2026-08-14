@@ -5,6 +5,7 @@ import type { Direcao } from "@/lib/filtros/esquemas";
 import { hojeEm, type ContextoTemporal } from "@/lib/filtros/periodo";
 import { toNumber } from "@/lib/format";
 
+import { aliasDisponivel, expressaoNomeDaConta, joinAlias } from "./alias-conta";
 import {
   condicaoDeslocada,
   condicoesDeCorte,
@@ -227,7 +228,15 @@ export async function getCustoPorConta(
   if (!identificadorPermitido(opcoes.ordenarPor, COLUNAS_ORDENACAO_CUSTO)) {
     throw new Error(`Campo de ordenacao invalido: ${opcoes.ordenarPor}`);
   }
-  const coluna = COLUNAS_ORDENACAO_CUSTO[opcoes.ordenarPor];
+
+  const comAlias = await aliasDisponivel();
+  // O id vem do AGREGADO (`g`), nao do cadastro: conta com custo e sem cadastro
+  // tem `a.account_id` nulo aqui, e e justamente ela que precisa do fallback.
+  const amarracao = { colunaId: "g.account_id", cadastro: "a" };
+  const nome = expressaoNomeDaConta(comAlias, amarracao);
+
+  const coluna =
+    opcoes.ordenarPor === "nome" ? nome : COLUNAS_ORDENACAO_CUSTO[opcoes.ordenarPor];
   const direcao = opcoes.direcao === "asc" ? "ASC" : "DESC";
 
   const p = new ConstrutorParams();
@@ -238,7 +247,7 @@ export async function getCustoPorConta(
 
   const linhas = await query<{
     account_id: string;
-    account_name: string | null;
+    nome_exibicao: string;
     business_unit: string | null;
     cost_center: string | null;
     environment: string | null;
@@ -262,7 +271,7 @@ export async function getCustoPorConta(
        GROUP BY d.account_id
     )
     SELECT g.account_id,
-           a.account_name,
+           ${nome} AS nome_exibicao,
            a.business_unit,
            a.cost_center,
            a.environment,
@@ -275,6 +284,7 @@ export async function getCustoPorConta(
            sum(g.total) OVER () AS soma_janela
       FROM agregado g
       LEFT JOIN cloud_accounts a ON a.account_id = g.account_id
+      ${joinAlias(comAlias, amarracao)}
      ORDER BY ${coluna} ${direcao} NULLS LAST, g.account_id ASC
      LIMIT ${limite} OFFSET ${deslocamento}
     `,
@@ -293,7 +303,7 @@ export async function getCustoPorConta(
       const totalAnterior = toNumber(l.total_anterior);
       return {
         accountId: l.account_id,
-        accountName: l.account_name ?? `Conta ${l.account_id}`,
+        accountName: l.nome_exibicao,
         businessUnit: l.business_unit,
         costCenter: l.cost_center,
         environment: l.environment,

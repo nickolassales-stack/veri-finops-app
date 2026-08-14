@@ -8,6 +8,8 @@ import {
 } from "@/lib/database";
 import type { Direcao } from "@/lib/filtros/esquemas";
 
+import { aliasDisponivel, expressaoNomeDaConta, joinAlias } from "./alias-conta";
+
 /**
  * Cadastro de contas (`cloud_accounts`).
  *
@@ -35,6 +37,10 @@ export const CAMPOS_ORDENACAO_CONTA = Object.keys(COLUNAS_ORDENACAO) as [
 
 export type Conta = {
   accountId: string;
+  /**
+   * Nome JA RESOLVIDO pela cascata alias -> account_name -> conta-<id>.
+   * Quem consome nao precisa (nem deve) saber de qual degrau veio.
+   */
   accountName: string;
   businessUnit: string | null;
   costCenter: string | null;
@@ -60,6 +66,10 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
   const params = new ConstrutorParams();
   const condicoes: string[] = [];
 
+  const comAlias = await aliasDisponivel();
+  const amarracao = { colunaId: "a.account_id", cadastro: "a" };
+  const nome = expressaoNomeDaConta(comAlias, amarracao);
+
   if (p.apenasAtivas) {
     condicoes.push("a.active");
   }
@@ -69,8 +79,11 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
     // por "%" nao retorne a base inteira.
     const termo = params.add(`%${escaparLike(p.busca)}%`);
     condicoes.push(
+      // Busca pelo nome RESOLVIDO, nao por `account_name` cru: quem procura
+      // "Financeiro" espera achar a conta cujo alias e Financeiro, ainda que o
+      // cadastro a chame de "conta-147997123577".
       `(a.account_id ILIKE ${termo} ESCAPE '\\'
-        OR a.account_name ILIKE ${termo} ESCAPE '\\'
+        OR ${nome} ILIKE ${termo} ESCAPE '\\'
         OR coalesce(a.business_unit, '') ILIKE ${termo} ESCAPE '\\'
         OR coalesce(a.cost_center, '') ILIKE ${termo} ESCAPE '\\')`,
     );
@@ -81,7 +94,9 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
   if (!identificadorPermitido(p.ordenarPor, COLUNAS_ORDENACAO)) {
     throw new Error(`Campo de ordenacao invalido: ${p.ordenarPor}`);
   }
-  const coluna = COLUNAS_ORDENACAO[p.ordenarPor];
+  // Ordenar por "nome" tem de seguir o nome EXIBIDO. Ordenar pela coluna crua
+  // faria a lista aparecer fora de ordem alfabetica para quem le a tela.
+  const ordenacao = p.ordenarPor === "nome" ? nome : `a.${COLUNAS_ORDENACAO[p.ordenarPor]}`;
   const direcao = p.direcao === "asc" ? "ASC" : "DESC";
 
   const where = condicoes.length > 0 ? `WHERE ${condicoes.join(" AND ")}` : "";
@@ -90,7 +105,7 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
 
   const linhas = await query<{
     account_id: string;
-    account_name: string | null;
+    nome_exibicao: string;
     business_unit: string | null;
     cost_center: string | null;
     environment: string | null;
@@ -99,15 +114,16 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
   }>(
     `
     SELECT a.account_id,
-           a.account_name,
+           ${nome} AS nome_exibicao,
            a.business_unit,
            a.cost_center,
            a.environment,
            a.active,
            count(*) OVER () AS total_geral
       FROM cloud_accounts a
+      ${joinAlias(comAlias, amarracao)}
       ${where}
-     ORDER BY a.${coluna} ${direcao} NULLS LAST, a.account_id ASC
+     ORDER BY ${ordenacao} ${direcao} NULLS LAST, a.account_id ASC
      LIMIT ${limite} OFFSET ${deslocamento}
     `,
     params.lista,
@@ -117,9 +133,7 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
     total: linhas.length > 0 ? Number(linhas[0].total_geral) : 0,
     itens: linhas.map((l) => ({
       accountId: l.account_id,
-      // `account_name` e NOT NULL no schema; o fallback cobre o caso de a
-      // constraint mudar sem a aplicacao saber.
-      accountName: l.account_name ?? `Conta ${l.account_id}`,
+      accountName: l.nome_exibicao,
       businessUnit: l.business_unit,
       costCenter: l.cost_center,
       environment: l.environment,
@@ -140,12 +154,19 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
 export async function nomesDasContas(ids: string[]): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
 
-  const linhas = await query<{ account_id: string; account_name: string | null }>(
-    `SELECT account_id, account_name FROM cloud_accounts WHERE account_id = ANY($1)`,
+  const comAlias = await aliasDisponivel();
+  const amarracao = { colunaId: "a.account_id", cadastro: "a" };
+
+  const linhas = await query<{ account_id: string; nome_exibicao: string }>(
+    `SELECT a.account_id,
+            ${expressaoNomeDaConta(comAlias, amarracao)} AS nome_exibicao
+       FROM cloud_accounts a
+       ${joinAlias(comAlias, amarracao)}
+      WHERE a.account_id = ANY($1)`,
     [ids],
   );
 
-  return new Map(linhas.map((l) => [l.account_id, l.account_name ?? l.account_id]));
+  return new Map(linhas.map((l) => [l.account_id, l.nome_exibicao]));
 }
 
 /**

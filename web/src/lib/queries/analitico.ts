@@ -10,6 +10,7 @@ import {
 import type { Direcao } from "@/lib/filtros/esquemas";
 import { toNumber } from "@/lib/format";
 
+import { aliasDisponivel, expressaoNomeDaConta, joinAlias } from "./alias-conta";
 import {
   condicoesDeCorte,
   janelaAtual,
@@ -76,7 +77,10 @@ export type LinhaAnalitica = {
   billingPeriod: string;
   accountId: string;
   /** `null` quando a conta tem custo mas nao esta em `cloud_accounts`. */
-  accountName: string | null;
+  /** Nome JA RESOLVIDO: alias -> account_name -> conta-<id>. Nunca vazio. */
+  accountName: string;
+  /** `false` quando a conta tem custo mas nao esta em `cloud_accounts`. */
+  cadastrada: boolean;
   service: string;
   /**
    * `null` quando o ETL nao informou a regiao. A string literal "nan" que o ETL
@@ -166,7 +170,16 @@ export async function getPaginaAnalitica(
   if (!identificadorPermitido(opcoes.ordenarPor, COLUNAS_ORDENACAO)) {
     throw new Error(`Campo de ordenacao invalido: ${opcoes.ordenarPor}`);
   }
-  const coluna = COLUNAS_ORDENACAO[opcoes.ordenarPor];
+
+  const comAlias = await aliasDisponivel();
+  // `d.account_id` como ultimo degrau: a linha de custo sempre tem conta, o
+  // cadastro nem sempre.
+  const amarracao = { colunaId: "d.account_id", cadastro: "a" };
+  const nomeDaConta = expressaoNomeDaConta(comAlias, amarracao);
+
+  // Ordenar por "conta" segue o nome EXIBIDO -- e o alias que o usuario le.
+  const coluna =
+    opcoes.ordenarPor === "accountName" ? nomeDaConta : COLUNAS_ORDENACAO[opcoes.ordenarPor];
   const direcao = opcoes.direcao === "asc" ? "ASC" : "DESC";
 
   const p = new ConstrutorParams();
@@ -182,9 +195,10 @@ export async function getPaginaAnalitica(
   const linhas = await executar<{
     id: string;
     usage_date: string;
+    nome_exibicao: string;
+    cadastrada: boolean;
     billing_period: string;
     account_id: string;
-    account_name: string | null;
     service: string;
     region: string | null;
     cost_amount: string;
@@ -195,13 +209,18 @@ export async function getPaginaAnalitica(
     `
     SELECT d.id,
            d.usage_date,
+           ${nomeDaConta} AS nome_exibicao,
+           -- Preserva o sinal de "conta com custo mas fora do cadastro". A
+           -- cascata de nomes sempre devolve algo, entao sem esta coluna a
+           -- tela perderia a distincao entre uma conta batizada e uma que
+           -- ninguem cadastrou -- e e ela que indica cadastro desatualizado.
+           (a.account_id IS NOT NULL) AS cadastrada,
            -- Periodo de COBRANCA ao lado da data de uso. Sem esta coluna, um
            -- arquivo exportado de julho traria uma linha datada 04/09 sem nada
            -- que explicasse por que ela esta ali. O coalesce mantem o valor
            -- preenchido mesmo antes do backfill.
            coalesce(d.billing_period, to_char(d.usage_date, 'YYYY-MM')) AS billing_period,
            d.account_id,
-           a.account_name,
            d.service,
            -- "nan" nao e regiao, e ausencia de informacao. Traduzir aqui evita
            -- que a interface precise conhecer a peculiaridade do ETL.
@@ -215,6 +234,7 @@ export async function getPaginaAnalitica(
            sum(d.cost_amount) OVER ()   AS soma_usd
       FROM aws_daily_costs d
       LEFT JOIN cloud_accounts a ON a.account_id = d.account_id
+      ${joinAlias(comAlias, amarracao)}
      WHERE ${juntarE(condicoes)}
      -- d.id como ultimo critério: sem desempate estavel, duas paginas podem
      -- repetir ou omitir uma linha, porque OFFSET nao garante ordem entre
@@ -233,7 +253,8 @@ export async function getPaginaAnalitica(
       usageDate: l.usage_date,
       billingPeriod: l.billing_period,
       accountId: l.account_id,
-      accountName: l.account_name,
+      accountName: l.nome_exibicao,
+      cadastrada: l.cadastrada,
       service: l.service,
       region: l.region,
       costUSD: toNumber(l.cost_amount),

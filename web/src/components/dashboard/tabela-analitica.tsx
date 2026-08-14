@@ -143,15 +143,21 @@ export function TabelaAnalitica({
               </td>
 
               <td className="py-2 pr-4">
-                {/* Nome amigavel quando existe; o id sempre, porque e ele que
-                    identifica a conta na AWS. */}
-                <span className="block max-w-[16rem] truncate">
-                  {linha.accountName ?? (
-                    <span className="text-texto-suave">sem cadastro</span>
-                  )}
+                {/* Alias quando existe; o id SEMPRE, porque e ele que
+                    identifica a conta na AWS e o alias e apenas um rotulo. */}
+                <span className="block max-w-[16rem] truncate" title={linha.accountName}>
+                  {linha.accountName}
                 </span>
                 <span className="veri-numero block text-xs text-texto-suave">
                   {linha.accountId}
+                  {!linha.cadastrada && (
+                    <span
+                      className="ml-1"
+                      title="Esta conta tem custo, mas nao esta em cloud_accounts."
+                    >
+                      · sem cadastro
+                    </span>
+                  )}
                 </span>
               </td>
 

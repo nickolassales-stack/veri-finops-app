@@ -1,6 +1,6 @@
 import { Aviso } from "@/components/ui/aviso";
 import { Card } from "@/components/ui/card";
-import { requirePapel } from "@/lib/auth/dal";
+import { requirePermissao } from "@/lib/auth/autorizacao";
 import { checkDbHealth } from "@/lib/database";
 import { formatInteiro } from "@/lib/format";
 import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico";
@@ -8,8 +8,11 @@ import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico
 export const metadata = { title: "Diagnostico" };
 
 export default async function DiagnosticoPage() {
-  // Esta tela expoe estrutura do banco e privilegios: restrita a ADMIN.
-  await requirePapel("ADMIN", "/diagnostico");
+  // Esta tela expoe estrutura do banco e privilegios. Passou de "so ADMIN" para
+  // `diagnostics:view` junto com a area administrativa: o ADMIN continua
+  // entrando por curto-circuito de papel, e agora um grupo tecnico tambem pode
+  // receber acesso sem precisar virar administrador do portal inteiro.
+  await requirePermissao("diagnostics:view", "/diagnostico");
 
   const db = await checkDbHealth();
 

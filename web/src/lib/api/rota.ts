@@ -1,6 +1,8 @@
 import "server-only";
 
+import { getAutorizacao } from "@/lib/auth/autorizacao";
 import { getSessao } from "@/lib/auth/dal";
+import { can, type Permissao } from "@/lib/auth/permissoes";
 import type { Sessao } from "@/lib/auth/session";
 import { getEnv } from "@/lib/env";
 
@@ -56,6 +58,85 @@ export function rotaProtegida(
 
       // `meta` do manipulador vem primeiro: os campos fixos abaixo nao podem
       // ser sobrescritos por engano por uma rota.
+      return respostaOk(dados, {
+        ...meta,
+        moeda: "USD",
+        timezone: tz,
+        geradoEm: new Date().toISOString(),
+      });
+    } catch (err) {
+      return traduzirFalha(nome, err);
+    }
+  };
+}
+
+/**
+ * Envelope das rotas ADMINISTRATIVAS: sessao + permissao + parametros de rota.
+ *
+ * Tres diferencas em relacao a `rotaProtegida`:
+ *
+ * 1. Alem da sessao, exige uma PERMISSAO. Sem ela, 403 -- e a checagem vem
+ *    antes de ler qualquer parametro, entao quem nao pode nem consegue sondar
+ *    a validacao da rota.
+ * 2. Entrega `params` ja resolvidos (no Next 16 eles chegam como Promise).
+ * 3. Aceita o corpo da requisicao, que as rotas de leitura nao usam. O corpo e
+ *    lido aqui, uma vez: `Request` so pode ser consumido uma vez, e deixar isso
+ *    para o manipulador convidaria ao erro de ler duas vezes.
+ *
+ * Esconder o link na navegacao NAO e protecao. A autorizacao de verdade e esta
+ * -- e a de `requirePermissao()` nas paginas.
+ */
+export type ContextoAdmin<P> = ContextoRota & {
+  params: P;
+  /** Corpo JSON ja parseado. `{}` quando nao ha corpo ou nao e JSON valido. */
+  corpo: unknown;
+};
+
+export function rotaComPermissao<P extends Record<string, string> = Record<string, never>>(
+  nome: string,
+  permissao: Permissao,
+  manipulador: (ctx: ContextoAdmin<P>) => Promise<ResultadoRota>,
+) {
+  return async function handler(
+    request: Request,
+    contexto?: { params: Promise<P> },
+  ): Promise<Response> {
+    try {
+      const sessao = await getSessao();
+      if (!sessao) {
+        return respostaErro(
+          "nao-autenticado",
+          "Sessao ausente ou expirada. Entre novamente.",
+        );
+      }
+
+      const autorizacao = await getAutorizacao();
+      if (!autorizacao || !can(autorizacao, permissao)) {
+        return respostaErro(
+          "sem-permissao",
+          "Seu perfil nao tem permissao para esta operacao.",
+        );
+      }
+
+      const params = ((await contexto?.params) ?? {}) as P;
+
+      // GET/DELETE nao tem corpo; tentar ler lanca ou devolve vazio conforme o
+      // runtime. `{}` e a resposta certa nos dois casos -- a validacao Zod do
+      // manipulador e quem decide se faltou campo.
+      let corpo: unknown = {};
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        corpo = await request.json().catch(() => ({}));
+      }
+
+      const tz = getEnv().APP_TZ;
+      const { dados, meta } = await manipulador({
+        url: new URL(request.url),
+        sessao,
+        tz,
+        params,
+        corpo,
+      });
+
       return respostaOk(dados, {
         ...meta,
         moeda: "USD",

@@ -6,7 +6,7 @@ substituir nem alterar nenhum dos dois.
 
 | | |
 |---|---|
-| **Seções** | [1. Resumo](#1-resumo-da-aplicação) · [2. Arquitetura](#2-arquitetura) · [3. Fluxo de dados](#3-fluxo-de-dados) · [4. Variáveis](#4-variáveis-de-ambiente) · [5. Primeiro admin](#5-como-criar-o-primeiro-admin) · [6. Rodar local](#6-como-rodar-local) · [7. Rodar em produção](#7-como-rodar-em-produção) · [8. Implantar na EC2](#8-como-implantar-na-ec2) · [9. Rollback](#9-como-fazer-rollback) · [10. Validar dashboard](#10-como-validar-o-dashboard) · [11. Validar exportações](#11-como-validar-as-exportações) · [12. Troubleshooting](#12-troubleshooting) · [13. Limitações](#13-limitações-conhecidas) · [14. Homologação](#14-checklist-de-homologação) |
+| **Seções** | [1. Resumo](#1-resumo-da-aplicação) · [2. Arquitetura](#2-arquitetura) · [3. Fluxo de dados](#3-fluxo-de-dados) · [4. Variáveis](#4-variáveis-de-ambiente) · [5. Usuários e permissões](#5-usuários-grupos-e-permissões) · [6. Rodar local](#6-como-rodar-local) · [7. Rodar em produção](#7-como-rodar-em-produção) · [8. Implantar na EC2](#8-como-implantar-na-ec2) · [9. Rollback](#9-como-fazer-rollback) · [10. Validar dashboard](#10-como-validar-o-dashboard) · [11. Validar exportações](#11-como-validar-as-exportações) · [12. Troubleshooting](#12-troubleshooting) · [13. Limitações](#13-limitações-conhecidas) · [14. Homologação](#14-checklist-de-homologação) |
 
 ### Onde está o quê
 
@@ -29,6 +29,7 @@ Banco e carga:
 | Arquivo | Papel |
 |---|---|
 | [scripts/migrations/001-billing-period.sql](scripts/migrations/001-billing-period.sql) | Separa período financeiro de data de uso. **Reversível** ([rollback](scripts/migrations/001-billing-period-rollback.sql)) |
+| [scripts/migrations/002-admin-configuracoes.sql](scripts/migrations/002-admin-configuracoes.sql) | Alias de contas, grupos, vínculos e permissões. **Reversível** ([rollback](scripts/migrations/002-admin-configuracoes-rollback.sql)) — mas guarda dado que só existe ali |
 | [scripts/etl/athena_to_postgres.py](scripts/etl/athena_to_postgres.py) | Carga Athena → PostgreSQL. Roda na EC2, em `/opt/finops/etl/` |
 | [scripts/backfill-billing-period.py](scripts/backfill-billing-period.py) | Preenche o período de cobrança nas linhas já carregadas |
 | [scripts/reconciliacao-cost-explorer.sql](scripts/reconciliacao-cost-explorer.sql) | Confere o portal contra o AWS Cost Explorer |
@@ -37,20 +38,23 @@ Banco e carga:
 
 ## 1. Resumo da aplicação
 
-Três telas, atrás de login, alimentadas pelo PostgreSQL do FinOps:
+Telas atrás de login, alimentadas pelo PostgreSQL do FinOps:
 
-| Tela | Rota | Quem vê | O que faz |
+| Tela | Rota | Exige | O que faz |
 |---|---|---|---|
-| **Visão executiva** | `/dashboard` | qualquer sessão | KPIs do período, custo por conta, maiores serviços, evolução diária, distribuição percentual |
-| **Analítico** | `/dashboard/analitico` | qualquer sessão | Tabela paginada de lançamentos, com filtros e **exportação CSV/XLSX** |
-| **Diagnóstico** | `/diagnostico` | `ADMIN` | Última carga do ETL, cobertura do dado, saúde do banco |
-| **Minha conta** | `/conta` | qualquer sessão | Troca de senha |
+| **Visão executiva** | `/dashboard` | `dashboard:view` | KPIs do período, custo por conta, maiores serviços, evolução diária, distribuição percentual |
+| **Analítico** | `/dashboard/analitico` | `analytic:view` | Tabela paginada de lançamentos, com filtros e **exportação CSV/XLSX** |
+| **Configurações** | `/dashboard/configuracoes` | `settings:view` | Alias de contas, usuários, grupos e permissões |
+| **Diagnóstico** | `/diagnostico` | `diagnostics:view` | Última carga do ETL, cobertura do dado, saúde do banco |
+| **Minha conta** | `/conta` | sessão | Troca de senha |
 
-**Papéis:** `ADMIN` e `VIEWER`. Esconder o link do menu não é a proteção — a
-autorização real está em `requirePapel()` dentro da rota.
+**Autorização por permissão, não por papel.** `ADMIN` continua podendo tudo, mas
+o que decide cada tela é uma permissão nomeada, concedida por grupo — ver
+seção 5. Esconder o link do menu não é a proteção: a autorização real está em
+`requirePermissao()` dentro da página e em `rotaComPermissao()` na rota de API.
 
 **Não existe cadastro público.** O primeiro administrador é criado por comando
-pontual (seção 5) e ele cria os demais pelo mesmo comando.
+pontual (seção 5); os demais nascem pela tela de usuários.
 
 **O valor oficial é USD.** O BRL é estimativa visual, calculada com a PTAX do
 Banco Central, marcada como indicativa em toda tela e **nunca gravada no banco**.
@@ -234,7 +238,9 @@ ambiente da execução que cria o administrador (seção 5).
 
 ---
 
-## 5. Como criar o primeiro admin
+## 5. Usuários, grupos e permissões
+
+### O primeiro admin
 
 Não há cadastro público. O primeiro usuário é criado por comando pontual, com a
 senha vivendo apenas no ambiente daquela execução:
@@ -263,6 +269,128 @@ docker exec -i finops-postgres \
   psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
   < scripts/create-auth-tables.sql
 ```
+
+Do segundo usuário em diante, use a tela — não o comando.
+
+### O modelo de permissões
+
+A permissão efetiva é a **união** de três origens. Nunca uma subtração: grupo
+só concede.
+
+| Origem | O que dá |
+|---|---|
+| Perfil **ADMIN** | tudo, por curto-circuito — não depende de grupo nenhum |
+| Piso de leitura | `dashboard:view` e `analytic:view`, para qualquer usuário |
+| Grupos **ativos** | o que cada grupo conceder |
+
+Não existe permissão negativa, e isso é deliberado. Com negação, responder *“por
+que fulano não consegue exportar?”* viraria uma investigação pelo cruzamento de
+vários grupos. Sem ela, a resposta é uma busca por quem concede.
+
+O ADMIN nunca é uma lista de permissões — é um `return true`. Enumerá-lo abriria
+a chance de esquecer de acrescentar uma permissão nova e trancar o administrador
+para fora da própria tela que a introduziu.
+
+**Catálogo atual** (dez permissões). A fonte da verdade é
+[`web/src/lib/auth/permissoes.ts`](web/src/lib/auth/permissoes.ts), **não** uma
+tabela: uma permissão só significa alguma coisa se alguma rota a verifica.
+
+| Área | Permissão | O que libera |
+|---|---|---|
+| Custos | `dashboard:view` | visão executiva |
+| Custos | `analytic:view` | analítico, lançamento a lançamento |
+| Custos | `analytic:export` | baixar CSV e XLSX |
+| Configurações | `settings:view` | entrar na área administrativa |
+| Configurações | `settings:accounts` | alias e metadados das contas AWS |
+| Configurações | `settings:users` | criar, ativar e desativar usuários |
+| Configurações | `settings:groups` | criar grupos e distribuir permissões |
+| Operação | `diagnostics:view` | tela de diagnóstico |
+| Faturamento | `billing:view` | fechamento de fatura e situação de pagamento |
+| Faturamento | `billing:manage` | alterar fechamento e situação |
+
+`app_group_permissions.permission` é texto livre no banco. A entrada é validada
+por Zod contra o catálogo, e valor desconhecido é **ignorado na leitura** —
+remover uma permissão do código a torna inerte, nunca perigosa.
+
+**Grupos padrão**, criados pela migração 002 e editáveis pela tela:
+
+| Grupo | Permissões iniciais |
+|---|---|
+| Administradores | todas as dez |
+| Visualizadores | `dashboard:view`, `analytic:view` |
+| Financeiro | as duas de leitura + `analytic:export`, `billing:view` |
+| Tecnologia | as duas de leitura + `analytic:export`, `diagnostics:view` |
+
+### A área administrativa
+
+`/dashboard/configuracoes`, restrita a quem tem `settings:view`. Cada subtela
+ainda exige a sua própria permissão — entrar na área não libera tudo dentro dela.
+
+Esconder o item do menu **não** é a proteção. A autorização está em
+`requirePermissao()` dentro de cada página e em `rotaComPermissao()` em cada rota
+de API; digitar a URL na barra do navegador para no mesmo lugar.
+
+**Alias de contas AWS** — `/dashboard/configuracoes/contas`
+
+A lista sai inteira de `cloud_accounts`: nenhum id de conta é fixo no código. O
+alias vive em `app_account_settings`, tabela própria do portal — escrever em
+`cloud_accounts` misturaria o que o portal sabe com o que o cadastro afirma, e
+uma recarga do cadastro apagaria o alias sem aviso.
+
+O nome exibido é uma cascata de três degraus:
+
+```
+app_account_settings.alias     o que o ADMIN digitou
+cloud_accounts.account_name    o que o cadastro afirma
+conta-<account_id>             último recurso, nunca vazio
+```
+
+Definido uma vez, o alias vale no **filtro de contas, nos cards, na tabela
+analítica e nos arquivos exportados** — a expressão está num lugar só,
+[`alias-conta.ts`](web/src/lib/queries/alias-conta.ts). Apagar o campo volta ao
+nome do cadastro. O **ID da conta continua sempre visível** ao lado: é ele que
+identifica a conta na AWS; o alias é apenas um rótulo.
+
+A mesma tela guarda unidade de negócio, centro de custo, ambiente, dia de
+fechamento da fatura e situação de pagamento. A data de atualização da situação
+só anda quando a situação muda de fato — reescrevê-la a cada salvamento faria
+“atualizado há 2 minutos” mentir sobre um campo que ninguém tocou.
+
+**Usuários** — `/dashboard/configuracoes/usuarios`
+
+Criar exige nome, e-mail e senha inicial de no mínimo 12 caracteres, guardada com
+scrypt e **nunca exibida depois**; o hash não sai do banco em resposta alguma.
+Combine a troca no primeiro acesso, em `/conta`.
+
+Desativar **encerra as sessões abertas na hora** — sem isso, desativar seria um
+pedido educado, válido só até o cookie expirar.
+
+Duas travas impedem o sistema de ficar sem administrador, e as duas existem
+porque o estrago não teria volta pela tela:
+
+1. ninguém desativa nem rebaixa **a si mesmo** — é o erro de clique clássico;
+2. ninguém desativa nem rebaixa o **último ADMIN ativo**, mesmo sendo outra
+   pessoa. A regra 1 sozinha não cobre isto: com dois administradores, cada um
+   pode derrubar o outro e o segundo a clicar deixa o sistema sem nenhum.
+
+As duas valem no **servidor**, não na tela: quem chamar a API direto esbarra
+nelas igual.
+
+**Grupos** — `/dashboard/configuracoes/grupos`
+
+Nome único ignorando caixa e espaço nas pontas. Grupo inativo deixa de conceder
+as próprias permissões sem perder os membros — é como suspender um acesso sem
+desmontar a estrutura.
+
+**Permissões** — `/dashboard/configuracoes/permissoes`
+
+Uma matriz por grupo. A tela envia o **conjunto completo** de caixas marcadas,
+não um delta: o que não veio foi desmarcado de propósito. A troca é
+transacional, então ninguém observa o grupo com zero permissões no meio do
+salvamento.
+
+As permissões novas valem **no próximo carregamento de página** de cada membro —
+a resolução é memoizada por requisição, não por sessão.
 
 ---
 
@@ -358,13 +486,18 @@ docker exec -i finops-postgres \
   psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
   < /opt/veri-finops/scripts/migrations/001-billing-period.sql
 
-# 6. variáveis
+# 6. área administrativa (migração 002) -- aditiva, uma vez; idempotente
+docker exec -i finops-postgres \
+  psql -U finops_user -d finops -X --no-psqlrc -v ON_ERROR_STOP=1 \
+  < /opt/veri-finops/scripts/migrations/002-admin-configuracoes.sql
+
+# 7. variáveis
 cp /opt/veri-finops/infra/.env.example /opt/finops/.env
 chmod 600 /opt/finops/.env
 sudo vi /opt/finops/.env        # APP_BUILD_CONTEXT, APP_PG_USER, APP_PG_PASSWORD
 unset APP_PG_PASSWORD
 
-# 7. subir SOMENTE o portal
+# 8. subir SOMENTE o portal
 /opt/veri-finops/scripts/finops-app.sh up
 ```
 
@@ -507,6 +640,27 @@ Metabase, volumes e dados permanecem intactos.
 Se `finops-portal:anterior` não existir (primeiro deploy), o script recusa e
 lista as imagens disponíveis em vez de fazer algo imprevisível.
 
+### Desfazer as migrações
+
+As duas são reversíveis, mas o risco delas é **oposto** e vale saber qual é qual.
+
+| Migração | O que o rollback apaga | Ordem segura |
+|---|---|---|
+| [001](scripts/migrations/001-billing-period-rollback.sql) | nada que não seja regerável — as colunas voltam a ser preenchidas pelo CUR | derrube o código **antes** do banco |
+| [002](scripts/migrations/002-admin-configuracoes-rollback.sql) | **aliases, grupos, vínculos e permissões** — digitados por alguém, não existem em outro lugar | **faça backup antes**; derrube o código antes do banco |
+
+```bash
+# backup obrigatório antes do rollback da 002
+docker exec finops-postgres pg_dump -U finops_user -d finops \
+  -t app_account_settings -t app_groups \
+  -t app_user_groups -t app_group_permissions \
+  > backup-admin-$(date +%F-%H%M).sql
+```
+
+Desfazer a 002 **não** derruba o portal: sem as tabelas, o nome da conta cai de
+volta em `cloud_accounts.account_name` e a área de configurações some do menu. O
+resto continua de pé.
+
 ---
 
 ## 10. Como validar o dashboard
@@ -600,7 +754,11 @@ caminho que possa divergir.
 | O total continua sem bater com o Cost Explorer | Migração aplicada, mas o backfill não rodou | `scripts/backfill-billing-period.py --aplicar --realinhar-mes`. A consulta 5 do script de reconciliação mostra a cobertura |
 | O mesmo valor aparece duas vezes na tabela mensal | Backfill rodou sem `--realinhar-mes` | Reexecute com a opção. A carga mensal insere no mês certo e a linha antiga fica no errado |
 | Tela em branco / erro 500 nas telas de dado | Banco fora, ou schema diferente do esperado | `curl localhost:3001/api/health`; `/diagnostico` (ADMIN) mostra a última carga do ETL |
-| `403 sem-permissao` | Perfil `VIEWER` acessando rota de ADMIN | Esperado. Ajuste o papel do usuário |
+| `403 sem-permissao` | Falta a permissão que a rota exige | Esperado. A resposta e a tela `/sem-permissao` **nomeiam** a permissão; conceda-a a um grupo do usuário em Configurações › Permissões |
+| Concedi a permissão e a pessoa continua sem acesso | A resolução é memoizada **por requisição**; a aba aberta ainda usa a anterior | Recarregar a página basta. Se persistir: o grupo está inativo, ou o vínculo usuário-grupo não foi salvo |
+| Área de configurações responde erro, resto do portal íntegro | Migração 002 não aplicada | Rode `scripts/migrations/002-admin-configuracoes.sql`. O portal **não** cai por isso: sem a tabela, o alias volta a `account_name` e o menu esconde a seção |
+| O alias não aparece nos filtros nem nas exportações | Migração 002 ausente, ou o campo foi salvo vazio | Campo em branco é "sem alias" de propósito, e volta ao nome do cadastro. Confira em Configurações › Contas AWS |
+| Não consigo desativar um usuário | É você mesmo, ou é o último ADMIN ativo | Comportamento deliberado: sem as duas travas, um clique deixaria o sistema sem administrador e a volta só existiria pelo banco. Promova outro antes |
 | Exportação responde 413 | O filtro seleciona mais que `EXPORT_MAX_ROWS` | Estreite período/contas, ou suba o teto **e** `APP_MEM_LIMIT` juntos |
 | Cotação some da tela, custo continua | Saída HTTPS para o BCB bloqueada | Esperado: o portal segue em USD. `EXCHANGE_RATE_PROVIDER=nenhum` silencia o aviso |
 | "Muitas tentativas. Tente novamente em N minutos" | 5 falhas de login em 15 min pelo mesmo par e-mail+IP | Espere 5 minutos. É proteção contra força bruta |
