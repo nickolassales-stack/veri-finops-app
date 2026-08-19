@@ -21,7 +21,8 @@ substituir nem alterar nenhum dos dois.
 - **[docs/RUNBOOK-app.md](docs/RUNBOOK-app.md)** — deploy detalhado, role do banco, riscos
 - **[docs/dns-nexeeo.md](docs/dns-nexeeo.md)** — domínio de produção `nexeeo.com`, DNS, TLS e o incidente do CNAME
 - **[docs/onboard-nova-conta.md](docs/onboard-nova-conta.md)** — como adicionar uma conta AWS ao pipeline, com o script [scripts/onboard-cur-account.sh](scripts/onboard-cur-account.sh)
-- **[scripts/ovh-collector/README.md](scripts/ovh-collector/README.md)** — POC de integração OVHcloud (segundo provedor): como gerar as chaves, rodar e ler o resultado
+- **[docs/ovh-finops.md](docs/ovh-finops.md)** — OVHcloud como segundo provedor: tabelas, collector, consultas de validação e pendências para o dashboard
+- **[scripts/ovh-collector/README.md](scripts/ovh-collector/README.md)** — como gerar as chaves da OVH e rodar a POC de exploração
 - **[docs/schema-snapshot.md](docs/schema-snapshot.md)** — schema real e achados de qualidade do dado
 - **[docs/API-dados.md](docs/API-dados.md)** — endpoints, filtros e contrato de resposta
 - **[docs/DECISOES-dataviz.md](docs/DECISOES-dataviz.md)** — paleta validada e regras de gráfico
@@ -33,6 +34,7 @@ Banco e carga:
 |---|---|
 | [scripts/migrations/001-billing-period.sql](scripts/migrations/001-billing-period.sql) | Separa período financeiro de data de uso. **Reversível** ([rollback](scripts/migrations/001-billing-period-rollback.sql)) |
 | [scripts/migrations/002-admin-configuracoes.sql](scripts/migrations/002-admin-configuracoes.sql) | Alias de contas, grupos, vínculos e permissões. **Reversível** ([rollback](scripts/migrations/002-admin-configuracoes-rollback.sql)) — mas guarda dado que só existe ali |
+| [scripts/migrations/005-ovh-collector.sql](scripts/migrations/005-ovh-collector.sql) | Tabelas `ovh_*` do segundo provedor. Aditiva, não toca em nada da AWS. **Reversível** ([rollback](scripts/migrations/005-ovh-collector-rollback.sql)) |
 | [scripts/etl/athena_to_postgres.py](scripts/etl/athena_to_postgres.py) | Carga Athena → PostgreSQL. Roda na EC2, em `/opt/finops/etl/` |
 | [scripts/backfill-billing-period.py](scripts/backfill-billing-period.py) | Preenche o período de cobrança nas linhas já carregadas |
 | [scripts/reconciliacao-cost-explorer.sql](scripts/reconciliacao-cost-explorer.sql) | Confere o portal contra o AWS Cost Explorer |

@@ -16,3 +16,8 @@ ovh==1.2.0
 # Le o .env sem exportar variavel no shell, o que evita a credencial vazar no
 # histórico do bash ou no `ps` de outro usuario.
 python-dotenv==1.0.1
+
+# Driver PostgreSQL, usado pelo collector (ovh_to_postgres.py) -- a POC nao
+# precisa dele. Mesma variante e versao que o ETL AWS ja usa em producao: evita exigir
+# toolchain de compilacao C na EC2.
+psycopg2-binary==2.9.12
