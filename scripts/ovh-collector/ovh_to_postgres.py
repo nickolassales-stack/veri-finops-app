@@ -369,7 +369,12 @@ def coletar(collector: Collector, cfg: dict[str, Any]) -> dict[str, Any]:
 
     # ---- faturas ----
     hoje = date.today()
-    inicio = date(hoje.year - (1 if hoje.month <= cfg["MESES_FATURA"] % 12 else 0), 1, 1)
+    # Recua MESES_FATURA meses a partir do mes corrente. A conta em meses
+    # absolutos atravessa a virada de ano sem caso especial -- a versao
+    # anterior caia sempre em 1o de janeiro do ano corrente, o que em janeiro
+    # reduzia a janela a um unico mes e descartava o historico calado.
+    absoluto = hoje.year * 12 + (hoje.month - 1) - cfg["MESES_FATURA"]
+    inicio = date(absoluto // 12, absoluto % 12 + 1, 1)
     ids = collector.tenta("/me/bill", **{"date.from": f"{inicio.isoformat()}T00:00:00Z"})
     if ids is None:
         ids = collector.tenta("/me/bill") or []  # filtro por data nem sempre aceito

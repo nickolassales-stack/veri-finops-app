@@ -12,9 +12,11 @@ mesmo PostgreSQL que ja guarda o custo AWS -- **sem tocar no pipeline AWS**.
 | Versionado em | `scripts/ovh-collector/` -- **sem o `.env`** |
 | Cron | **preparado, NAO instalado** -- ver secao 6 |
 
-> **Estado em 19/08/2026: nenhum dado coletado.** As tabelas existem e estao
-> vazias, o collector esta testado, mas **a credencial OVH nao autentica** -- a
-> application key e recusada nas tres regioes. Ver secao 7.
+> **Estado em 19/08/2026: primeira carga real concluida.** Conta `ovh-main-ca`
+> (`ovh80386@gmail.com`, endpoint `ovh-ca`, moeda **USD**), 39 faturas de
+> 2024-09 a 2026-08, 551 linhas de fatura, 512 linhas de custo, total
+> **US$ 30.917,39**. Uso por projeto (`usage_current` / `usage_forecast`) nao
+> veio: a API responde `no usages found`. Ver secao 7.
 
 ---
 
@@ -176,17 +178,42 @@ sobrepor as cargas cria contencao sem necessidade.
 
 ## 7. Estado atual e o que falta
 
-**A credencial OVH nao autentica.** Testada nas tres regioes (`ovh-ca`, `ovh-us`,
-`ovh-eu`): todas devolvem `This application key is invalid`. Nao e regiao errada.
-A application key fornecida tem **17 caracteres hex; a OVH usa 16** -- um digito a
-mais, provavelmente valor de exemplo ou erro de transcricao. Secret e consumer key
-tem os 32 esperados.
+A credencial foi regerada e **autentica** em `ovh-ca`. A carga inicial rodou com
+`OVH_MESES_FATURA=24` para trazer o historico inteiro; o padrao diario de 12
+meses cobre o periodo corrente sem revarrer tudo.
 
-Enquanto isso nao for resolvido: tabelas criadas e vazias, zero linhas
-importadas, zero projetos, zero faturas.
+### O que veio
 
-Para destravar: gerar chaves novas no console da regiao correta (README do
-collector, secao 2), preencher o `.env` e rodar `run-ovh-etl.sh manual`.
+| | |
+|---|---|
+| conta | `ovh-main-ca` -- `ovh80386@gmail.com`, pais BR, moeda **USD** |
+| faturas | 39, de 2024-09-11 a 2026-08-01 |
+| linhas de fatura | 551 |
+| linhas de custo | 512, todas com `source='invoice'` |
+| total | US$ 30.917,39 em 24 meses |
+
+### O que nao veio, e por que
+
+`usage/current` e `usage/forecast` respondem `ResourceNotFoundError: no usages
+found` para o unico projeto Public Cloud da conta (`Project 2026-07-21`,
+`plan_code=project.discovery`). Nao e falha de permissao nem de codigo: **o
+projeto nao tem consumo registrado**. Enquanto for assim, `ovh_monthly_costs` so
+tera linhas de fatura, e o custo aparece no mes em que foi **faturado**, nao no
+mes em que foi consumido.
+
+O collector trata isso como aviso, nao como erro: a execucao termina `success` e
+os avisos ficam no log. Uma falha aqui nao pode derrubar a coleta de faturas, que
+e o dado que existe.
+
+### Bug corrigido nesta carga
+
+A janela de faturas era calculada como
+`date(hoje.year - (1 if hoje.month <= MESES % 12 else 0), 1, 1)`. Com o padrao de
+12 meses, `12 % 12` e zero, a condicao nunca era verdadeira e o inicio caia
+**sempre em 1o de janeiro do ano corrente** -- em agosto, 8 meses em vez de 12;
+em janeiro, um unico mes. Nao dava erro: importava menos historico calado.
+Trocado por aritmetica em meses absolutos, que atravessa a virada de ano sem
+caso especial.
 
 ---
 

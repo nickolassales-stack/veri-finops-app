@@ -274,8 +274,11 @@ def main() -> int:
     detalhes_ok = 0
     if sucesso and ids_faturas:
         print(ok(f"  OK  {len(ids_faturas)} faturas na conta"))
-        recentes = ids_faturas[:FATURAS_A_DETALHAR]
-        print(f"      detalhando as {len(recentes)} mais recentes")
+        # Do fim da lista: na pratica a API devolve em ordem crescente de
+        # data, mas isso nao e documentado -- por isso o rotulo abaixo nao
+        # promete "as mais recentes", so identifica a amostra.
+        recentes = ids_faturas[-FATURAS_A_DETALHAR:]
+        print(f"      detalhando {len(recentes)}, do fim da lista devolvida")
         for bill_id in recentes:
             entrada: dict[str, Any] = {"billId": bill_id}
             s_cab, cab = coletor.get(f"/me/bill/{bill_id}")
