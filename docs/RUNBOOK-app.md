@@ -38,7 +38,7 @@ camada de visão executiva e governança.
   └──────────┬───────────┘
              v
    https://nexeeo.com  ·  www.nexeeo.com  ·  finops.nexeeo.com
-   (certificado PENDENTE -- ver docs/dns-nexeeo.md, secao 2)
+   HTTPS ATIVO -- Let's Encrypt, um certificado para os tres nomes
 ```
 
 Dominio de producao: **`nexeeo.com`**, com dois `e`. `nexxeo.com` (dois `x`) e de
@@ -256,11 +256,13 @@ Só troque `APP_BIND` para `0.0.0.0` **depois** de colocar Nginx + HTTPS na fren
 e restringir o Security Group — a mesma recomendação já registrada para a porta
 3000 do Metabase.
 
-Situação em 19/08/2026: o Nginx Proxy Manager já está instalado e alcança o
-portal pela rede `npm-public`, o Elastic IP `3.23.68.121` está associado e as
-portas 80/443 estão abertas. **Falta apenas o certificado**, bloqueado porque
-`www.nexeeo.com` aponta para o domínio errado na zona DNS — ver
-[dns-nexeeo.md](dns-nexeeo.md), seção 2. Enquanto o certificado não sair,
+Situação em 19/08/2026: **publicado.** URL oficial
+**https://finops.nexeeo.com**, com `nexeeo.com` e `www.nexeeo.com` servindo a
+mesma aplicação, certificado Let's Encrypt ativo e HTTP redirecionando para
+HTTPS. `APP_BIND` **continua em `127.0.0.1`** e deve permanecer: o acesso público
+é pelo proxy, e publicar a 8080 daria uma entrada que pula TLS, `Block Common
+Exploits` e o log por host. Ver README seção 7.1 e
+[dns-nexeeo.md](dns-nexeeo.md). Enquanto o certificado não sair,
 `APP_BIND` continua em `127.0.0.1`: publicar sem TLS é exatamente o que esta
 recomendação evita. Operação do proxy em
 `/opt/nginx-proxy-manager/README-operacao.md`, na EC2.

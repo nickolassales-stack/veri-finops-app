@@ -6,13 +6,21 @@ Levantado em **19/08/2026**, da EC2 de producao e da estacao administrativa.
 Somente consultas de leitura: nenhum container, certificado, aplicacao, banco ou
 ETL foi tocado.
 
+> **PUBLICADO EM 19/08/2026.** URL oficial: **https://finops.nexeeo.com**, com
+> `nexeeo.com` e `www.nexeeo.com` servindo a mesma aplicacao. Certificado Let's
+> Encrypt ativo cobrindo os tres nomes, HTTP redirecionando para HTTPS, HTTP/2
+> negociado. Nao ha pendencia de DNS nem de TLS.
+>
+> O historico do defeito fica na secao 2 porque a causa -- typo de dominio dentro
+> da zona certa -- se repete facil e nao aparece em busca no repositorio.
+
 > **Correcao de rumo.** Este documento substitui `docs/dns-nexxeo.md`, que
 > diagnosticava **`nexxeo.com`** -- dominio errado, com dois `x`, usado por
 > engano em prompts anteriores. Aquele diagnostico estava tecnicamente correto e
 > era sobre o dominio de outra pessoa: `nexxeo.com` pertence a um terceiro, esta
 > registrado na OVH desde 2015 e nao tem DNS funcionando. Nada dele se aplica
 > aqui. O historico fica na secao 6, porque um pedaco daquele erro **vazou para a
-> zona de producao** e precisa ser corrigido.
+> zona de producao** -- ja corrigido, ver secao 2.
 
 ---
 
@@ -48,12 +56,22 @@ mesmos da zona, e a zona responde com a flag `aa` (autoritativa).
 |---|---|---|---|
 | `nexeeo.com` | `NOERROR` | `3.23.68.121` | **OK** |
 | `finops.nexeeo.com` | `NOERROR` | `3.23.68.121` | **OK** |
-| `www.nexeeo.com` | **`SERVFAIL`** | -- | **QUEBRADO -- ver secao 2** |
+| `www.nexeeo.com` | `NOERROR` | CNAME -> `nexeeo.com` -> `3.23.68.121` | **OK** (corrigido 19/08/2026) |
 | `metabase.nexeeo.com` | `NXDOMAIN` | -- | nao existe (opcional) |
 
 ---
 
-## 2. O unico problema: `www.nexeeo.com` aponta para o dominio errado
+## 2. RESOLVIDO -- `www.nexeeo.com` apontava para o dominio errado
+
+**Corrigido em 19/08/2026.** A zona agora traz
+`www.nexeeo.com CNAME nexeeo.com`, que resolve `3.23.68.121`. Verificado na zona
+autoritativa e em `8.8.8.8` e `1.1.1.1`.
+
+O registro abaixo fica porque a causa e facil de repetir: um typo de dominio
+_dentro da zona certa_ nao aparece em nenhuma busca no repositorio, so numa
+consulta DNS.
+
+### Como estava
 
 Consultando a zona autoritativa diretamente:
 
@@ -67,19 +85,20 @@ www.nexeeo.com.   300   IN   CNAME   nexxeo.com.
                                      ^^^^^^^^^^ dois "x" -- dominio de terceiro
 ```
 
-O CNAME de `www` aponta para **`nexxeo.com`**, que:
+O CNAME de `www` apontava para **`nexxeo.com`**, que:
 
 - pertence a um terceiro (registrado na OVH desde 2015);
 - esta delegado a `ns13.ovh.net` e `dns13.ovh.net`;
-- **e esses servidores respondem `REFUSED`** -- estao vivos, mas nao hospedam a
-  zona.
+- **e esses servidores respondiam `REFUSED`** -- vivos, mas sem hospedar a zona.
 
-Resultado em cadeia: o resolvedor segue o CNAME, tenta resolver `nexxeo.com`,
-recebe `REFUSED` dos servidores delegados e devolve `SERVFAIL`. Por isso
-`www.nexeeo.com` falha enquanto o apex e o `finops` funcionam -- **o erro nao esta
-na zona `nexeeo.com` em si, esta no destino do CNAME.**
+Resultado em cadeia: o resolvedor seguia o CNAME, tentava resolver `nexxeo.com`,
+recebia `REFUSED` dos servidores delegados e devolvia `SERVFAIL`. Por isso o `www`
+falhava enquanto o apex e o `finops` funcionavam -- **o erro nao estava na zona
+`nexeeo.com`, estava no destino do CNAME.**
 
-O typo, portanto, nao ficou so na documentacao: **esta vivo em producao.**
+A licao que fica: o typo nao viveu apenas na documentacao. Um dominio errado
+_dentro da zona certa_ nao aparece em `git grep` nenhum -- so numa consulta DNS a
+zona autoritativa.
 
 ### Correcao
 
@@ -95,10 +114,14 @@ um salto de resolucao, deixa os tres nomes uniformes e remove a chance de um
 CNAME voltar a apontar para o lugar errado. Se mantiver `CNAME`, o destino
 precisa ser `nexeeo.com` -- com dois `e`.
 
-Enquanto isso nao for feito, `https://www.nexeeo.com` **nao funciona**, e o
-pedido de certificado no NPM **falha inteiro** -- inclusive para `nexeeo.com` e
-`finops.nexeeo.com`, porque um unico certificado cobre os tres nomes e o Let's
-Encrypt valida cada um separadamente. Ver secao 5.
+A correcao aplicada manteve `CNAME`, agora apontando para `nexeeo.com` -- o que e
+valido e resolve corretamente. A recomendacao de usar `A` continua valendo como
+preferencia, nao como pendencia.
+
+Enquanto o defeito existiu, o pedido de certificado teria falhado **inteiro** --
+inclusive para `nexeeo.com` e `finops.nexeeo.com`, que ja estavam corretos --
+porque um unico certificado cobre os tres nomes e o Let's Encrypt valida cada um
+separadamente.
 
 ### Se `metabase.nexeeo.com` for publicado
 
@@ -113,7 +136,7 @@ acesso direto ao banco financeiro e hoje conecta como superusuario.
 | Nome | Tipo | Valor | Estado |
 |---|---|---|---|
 | `nexeeo.com` | A | `3.23.68.121` | existe, correto |
-| `www.nexeeo.com` | A | `3.23.68.121` | **corrigir** -- hoje e CNAME para `nexxeo.com` |
+| `www.nexeeo.com` | CNAME | `nexeeo.com` | corrigido 19/08/2026, resolve `3.23.68.121` |
 | `finops.nexeeo.com` | A | `3.23.68.121` | existe, correto |
 | `metabase.nexeeo.com` | A | `3.23.68.121` | opcional, nao existe |
 
@@ -137,12 +160,12 @@ dig @a.gtld-servers.net nexeeo.com NS +short
 
 # resolucao dos tres nomes de producao
 dig +short nexeeo.com              # 3.23.68.121
-dig +short www.nexeeo.com          # hoje: vazio (SERVFAIL) -- ver secao 2
+dig +short www.nexeeo.com          # nexeeo.com. + 3.23.68.121
 dig +short finops.nexeeo.com       # 3.23.68.121
 
 # a zona autoritativa, sem passar por cache
 dig @ns-1389.awsdns-45.org nexeeo.com        SOA    # NOERROR, flag "aa"
-dig @ns-1389.awsdns-45.org www.nexeeo.com    A      # o CNAME errado aparece aqui
+dig @ns-1389.awsdns-45.org www.nexeeo.com    A      # o destino do CNAME aparece aqui
 dig @ns-1389.awsdns-45.org finops.nexeeo.com A
 
 # HTTP e HTTPS
@@ -169,24 +192,51 @@ para diagnosticar delegacao. Para isso, pergunte ao TLD
 
 ---
 
-## 5. Checklist antes de emitir SSL no NPM
+## 5. Checklist de emissao do SSL -- CONCLUIDO
 
-Cada item nao marcado e uma falha do Let's Encrypt, e falhas consomem o limite de
-**5 por conta/dominio/hora** -- estourar bloqueia a tentativa legitima seguinte.
+Registro do que foi conferido antes e depois da emissao. Mantido porque a mesma
+sequencia vale para o proximo host (por exemplo `metabase.nexeeo.com`), e porque
+cada item nao conferido e uma falha do Let's Encrypt -- e falhas consomem o limite
+de **5 por conta/dominio/hora**, bloqueando a tentativa legitima seguinte.
 
-- [ ] **`www.nexeeo.com` corrigido** (secao 2) e resolvendo `3.23.68.121`
-- [ ] `dig +short nexeeo.com` devolve `3.23.68.121`
-- [ ] `dig +short finops.nexeeo.com` devolve `3.23.68.121`
-- [ ] os **tres** nomes resolvem: um certificado cobre os tres, e **se um so
-      falhar o pedido inteiro falha**
-- [ ] `curl -I http://nexeeo.com` responde do **openresty** (o NPM)
-- [ ] `curl -I http://nexeeo.com/.well-known/acme-challenge/teste` devolve **404
-      do openresty** -- prova que o HTTP-01 chega no proxy
-- [ ] 80/tcp e 443/tcp abertas no Security Group (verificado em 18/08/2026)
-- [ ] Elastic IP associado (feito: `3.23.68.121`)
-- [ ] proxy host criado com os tres nomes -> `finops-portal:3000` (secao 7)
-- [ ] `MX`/`SPF`/`DKIM` conferidos, se houver e-mail no dominio (secao 3)
-- [ ] backup de `/opt/nginx-proxy-manager/data` e `letsencrypt` depois de emitir
+Antes da emissao:
+
+- [x] **`www.nexeeo.com` corrigido** (secao 2) e resolvendo `3.23.68.121`
+- [x] `dig +short nexeeo.com` devolve `3.23.68.121`
+- [x] `dig +short finops.nexeeo.com` devolve `3.23.68.121`
+- [x] os **tres** nomes resolvem, na zona e em `8.8.8.8` / `1.1.1.1`
+- [x] `curl -I http://nexeeo.com` responde do **openresty** (o NPM)
+- [x] `curl -I http://nexeeo.com/.well-known/acme-challenge/teste` devolve **404
+      do openresty** nos tres nomes -- o HTTP-01 chega no proxy
+- [x] 80/tcp e 443/tcp abertas no Security Group
+- [x] Elastic IP associado (`3.23.68.121`)
+- [x] portal saudavel e alcancavel pelo proxy como `finops-portal:3000`
+
+Painel, tambem concluido:
+
+- [x] primeiro login no NPM feito e senha trocada (`/api/` responde
+      `"setup": true`)
+- [x] proxy host criado com os tres nomes -> `finops-portal:3000` (secao 7)
+- [x] certificado emitido, Force SSL ON, HTTP/2 ON, HSTS OFF
+
+Depois da emissao -- verificado em 19/08/2026:
+
+- [x] certificado Let's Encrypt com os tres nomes no `subjectAltName`,
+      valido de 19/08 a 17/11/2026
+- [x] `http://` responde `301` para `https://` nos tres nomes
+- [x] ALPN negocia `h2`
+- [x] sem cabecalho `Strict-Transport-Security` -- HSTS OFF, decisao consciente
+- [x] 17 verificacoes funcionais pelo dominio publico: aplicacao servida (nao a
+      pagina padrao do proxy), telas exigindo sessao, APIs em `401`, assets
+      estaticos em `200`, `/api/health` com `db.ok` pelos tres nomes
+
+Continua aberto, e nao e pendencia de DNS:
+
+- [ ] `MX`/`SPF`/`DKIM` na zona, se houver e-mail em `@nexeeo.com` (secao 3)
+- [ ] backup de `/opt/nginx-proxy-manager/data` e `letsencrypt` -- banco do painel
+      e chaves privadas do certificado
+- [ ] `metabase.nexeeo.com` (`NXDOMAIN` hoje), se o Metabase for publicado por
+      HTTPS -- ver a limitacao 1 do README
 
 ---
 
@@ -213,14 +263,16 @@ o dominio e de outra pessoa.
 
 ### O que sobrou do diagnostico errado
 
-Um unico item, e e o da secao 2: o CNAME de `www.nexeeo.com` aponta para
-`nexxeo.com`. Alguem escreveu o dominio errado dentro da zona certa. E o mesmo
-typo, no unico lugar onde ele causa indisponibilidade real em vez de so
-documentacao confusa.
+Um unico item, o da secao 2: o CNAME de `www.nexeeo.com` apontava para
+`nexxeo.com` -- alguem escreveu o dominio errado dentro da zona certa. Era o mesmo
+typo, no unico lugar onde ele causava indisponibilidade real em vez de apenas
+documentacao confusa. **Corrigido em 19/08/2026.**
 
 ---
 
-## 7. Proxy host no Nginx Proxy Manager
+## 7. Proxy host no Nginx Proxy Manager -- ATIVO
+
+Criado e online em 19/08/2026, com a configuracao abaixo.
 
 | Campo | Valor |
 |---|---|

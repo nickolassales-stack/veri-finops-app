@@ -19,7 +19,7 @@ substituir nem alterar nenhum dos dois.
 | [assets/logos/](assets/logos/) | Identidade visual VERI |
 
 - **[docs/RUNBOOK-app.md](docs/RUNBOOK-app.md)** — deploy detalhado, role do banco, riscos
-- **[docs/dns-nexeeo.md](docs/dns-nexeeo.md)** — domínio de produção `nexeeo.com`, estado do DNS e checklist antes de emitir SSL
+- **[docs/dns-nexeeo.md](docs/dns-nexeeo.md)** — domínio de produção `nexeeo.com`, DNS, TLS e o incidente do CNAME
 - **[docs/schema-snapshot.md](docs/schema-snapshot.md)** — schema real e achados de qualidade do dado
 - **[docs/API-dados.md](docs/API-dados.md)** — endpoints, filtros e contrato de resposta
 - **[docs/DECISOES-dataviz.md](docs/DECISOES-dataviz.md)** — paleta validada e regras de gráfico
@@ -761,42 +761,135 @@ container vai para outra rede e o host `postgres` deixa de resolver.
 
 ---
 
-## 7.1 Domínio público e HTTPS
+## 7.1 Produção: domínio, HTTPS e proxy reverso
 
-Domínios oficiais de produção:
+**No ar desde 19/08/2026.**
 
 | | |
 |---|---|
-| Portal | `https://nexeeo.com` · `https://www.nexeeo.com` · `https://finops.nexeeo.com` |
+| **URL oficial** | **https://finops.nexeeo.com** |
+| Domínios alternativos | https://nexeeo.com · https://www.nexeeo.com |
+| Proxy reverso | **Nginx Proxy Manager** (`nginx-proxy-manager`), em `/opt/nginx-proxy-manager` na EC2 |
+| Destino do proxy | **`http://finops-portal:3000`**, pela rede Docker `npm-public` |
+| TLS | **Let's Encrypt**, um certificado para os três nomes, renovação automática |
 | Elastic IP | `3.23.68.121` |
-| Proxy | `nginx-proxy-manager`, em `/opt/nginx-proxy-manager` na EC2 |
-| Destino | `finops-portal:3000` pela rede Docker `npm-public` |
+
+Os três nomes servem a mesma aplicação. HTTP responde `301` para HTTPS (Force
+SSL), HTTP/2 está negociado, e HSTS está **desligado** de propósito — ver abaixo.
 
 **Atenção ao domínio: `nexeeo`, com dois `e`.** `nexxeo.com` (dois `x`) é de
-terceiro e foi usado por engano em documentação anterior. O typo ainda está vivo
-na zona DNS — ver a seção 2 de [docs/dns-nexeeo.md](docs/dns-nexeeo.md).
+terceiro e foi usado por engano em documentação anterior — inclusive dentro da
+zona DNS, onde o `www` chegou a apontar para ele. A história está na seção 2 de
+[docs/dns-nexeeo.md](docs/dns-nexeeo.md), e vale ler: um domínio errado *dentro
+da zona certa* não aparece em busca no repositório, só em consulta DNS.
 
-### Proxy host no NPM
+### Como o tráfego chega
 
-| Campo | Valor |
-|---|---|
-| Domain Names | `nexeeo.com`, `www.nexeeo.com`, `finops.nexeeo.com` |
-| Scheme | `http` |
-| Forward Hostname / IP | `finops-portal` |
-| Forward Port | `3000` |
-| Block Common Exploits | ON |
-| Websockets Support | ON |
-| SSL | `Request a new SSL Certificate`, Force SSL ON, HTTP/2 ON, HSTS **OFF** |
+```
+    navegador
+       │ HTTPS 443 (TLS termina aqui)
+       v
+ ┌──────────────────────┐
+ │ nginx-proxy-manager  │  80 -> 301 -> 443 · rede npm-public
+ └──────────┬───────────┘
+            │ HTTP interno
+            v
+ ┌──────────────────────┐
+ │ finops-portal:3000   │  publicado no host só em 127.0.0.1:8080
+ └──────────┬───────────┘
+            │ rede finops_default
+            v
+      finops-postgres:5432   (nunca publicado; fora da npm-public)
+```
 
-Os três nomes vão no **mesmo** proxy host. `Forward Hostname` é o nome do
-container, não `localhost` — dentro do NPM, `localhost` é o próprio NPM. E
-`Forward Port` é a porta **interna** (`3000`), não a publicada no host (`8080`).
+O proxy alcança o portal pelo **nome do container**, não por IP nem `localhost`.
+A rede `npm-public` está declarada em
+[infra/docker-compose.veri-finops.yml](infra/docker-compose.veri-finops.yml), e
+não conectada à mão — a diferença importa: conexão feita por
+`docker network connect` não sobrevive a um `up -d --force-recreate`, e o site
+cairia no deploy seguinte sem causa aparente.
+
+### Painel do NPM — acesso por túnel SSH
+
+A porta 81 é publicada **só em `127.0.0.1`** e está filtrada no Security Group.
+Não há acesso direto pela internet, de propósito: o painel controla a terminação
+TLS de todos os domínios.
+
+```bash
+ssh -i ~/.ssh/finops-ec2.key -N -L 8181:127.0.0.1:81 ubuntu@3.23.68.121
+# depois, no navegador: http://127.0.0.1:8181
+```
+
+O primeiro login já foi feito e a senha padrão trocada — confirmável sem entrar
+no painel:
+
+```bash
+curl -sS http://127.0.0.1:81/api/ | head -1
+# "setup": true   -> existe administrador próprio
+# "setup": false  -> credencial padrão ainda valeria
+```
+
+### Security Group
+
+| Porta | Estado | Deve ser |
+|---|---|---|
+| 80/tcp | aberta | **aberta** — redirecionamento e desafio HTTP-01 do Let's Encrypt |
+| 443/tcp | aberta | **aberta** — o site |
+| 22/tcp | aberta | **restrita ao IP administrativo** — conferir |
+| 81/tcp | filtrada | **fechada** — painel do NPM, acesso por túnel |
+| 5432/tcp | filtrada | **fechada** — Postgres, publicado só em `127.0.0.1` |
+| 8080/tcp | filtrada | **fechada** — porta direta do portal; quem entra por ela pula TLS, `Block Common Exploits` e o log por host |
+| 3000/tcp | **aberta** | **fechar** — Metabase em HTTP sem TLS; ver seção 13 |
+
+O papel IAM da instância (`FinOpsEC2Role`) não tem `ec2:DescribeSecurityGroups`,
+então as regras não podem ser auditadas de dentro da EC2. A coluna "Estado" acima
+foi medida por tentativa de conexão TCP da estação administrativa, o que reflete
+o efeito real das regras.
+
+### Por que HSTS fica desligado
+
+HSTS instrui o navegador a recusar HTTP para o domínio por um período longo. Um
+erro de configuração com HSTS ligado **não se corrige do lado do servidor** —
+fica preso no cache do navegador de cada usuário até o prazo expirar. Ligue depois
+que o HTTPS estiver estável por algumas semanas, e comece com `max-age` curto.
+
+### Checklist pós-deploy
+
+Verificado em 19/08/2026 — 17 checagens pelo domínio público, todas passando:
+
+- [x] `https://finops.nexeeo.com` serve a aplicação (não a página padrão do proxy)
+- [x] `https://nexeeo.com` e `https://www.nexeeo.com` servem a mesma aplicação
+- [x] HTTP responde `301` para HTTPS nos três nomes
+- [x] certificado Let's Encrypt válido, com os três nomes no `subjectAltName`
+- [x] HTTP/2 negociado (ALPN `h2`)
+- [x] HSTS ausente — decisão consciente
+- [x] `/api/health` responde `{"status":"ok","db":{"ok":true}}` pelos três nomes
+- [x] telas protegidas redirecionam para `/login` preservando `?next=`
+- [x] APIs sem sessão devolvem `401`, exportações inclusive
+- [x] assets estáticos (`chunk` JS e CSS) servem `200` — sem `ChunkLoadError`
+- [x] login com credencial inválida devolve `401` sem emitir cookie
+- [x] painel do NPM com administrador próprio (`"setup": true`)
+- [x] Postgres inalterado: mesmo container, `RestartCount=0`, dados intactos
+- [x] Metabase inalterado e respondendo
+- [x] cron do ETL intacto e carga do dia registrada
+
+Pendente, e não é bloqueio de publicação:
+
+- [ ] fechar a porta 3000 do Metabase (seção 13) — hoje exposta em HTTP sem TLS
+- [ ] conferir se a 22 está restrita ao IP administrativo
+- [ ] rotacionar as senhas do banco (seção 13)
+- [ ] backup de `/opt/nginx-proxy-manager/data` e `letsencrypt` — contêm o banco
+      do painel e as chaves privadas do certificado
+- [ ] `MX`/`SPF`/`DKIM` na zona, se houver e-mail em `@nexeeo.com`
+
+Renovação do certificado, rollback, Access List e adição de novos hosts:
+`/opt/nginx-proxy-manager/README-operacao.md`, na EC2.
 
 ### A aplicação não sabe o domínio, e isso é de propósito
 
 Nenhuma URL absoluta é construída pelo código: redirecionamentos e exportações
-usam caminho relativo, e o cookie é `httpOnly`, `sameSite=lax` e `Secure`.
-Consequências:
+usam caminho relativo, com bloqueio de open-redirect em
+[destino.ts](web/src/lib/auth/destino.ts). Consequências:
 
 - trocar de domínio **não exige mudança de código nem novo build**;
 - login, logout e exportações funcionam atrás do proxy sem configuração extra —
@@ -806,23 +899,18 @@ Consequências:
   **documentação do domínio**, não configuração ativa. Estão marcadas como tal
   no próprio arquivo.
 
-### Validação do DNS
+### Validação do DNS e do TLS
 
 ```bash
 dig +short NS nexeeo.com
-dig @a.gtld-servers.net nexeeo.com NS +short
-dig +short nexeeo.com                 # 3.23.68.121
-dig +short www.nexeeo.com             # hoje falha -- ver docs/dns-nexeeo.md
-dig +short finops.nexeeo.com          # 3.23.68.121
+dig +short nexeeo.com www.nexeeo.com finops.nexeeo.com     # 3.23.68.121
 
-curl -I http://nexeeo.com
-curl -I https://nexeeo.com
-curl -I https://www.nexeeo.com
 curl -I https://finops.nexeeo.com
-```
+curl -I http://finops.nexeeo.com            # 301 -> https
+curl -sS https://finops.nexeeo.com/api/health
 
-Operação do proxy, renovação de certificado, Access List do Metabase e rollback:
-`/opt/nginx-proxy-manager/README-operacao.md` na EC2.
+echo | openssl s_client -servername finops.nexeeo.com   -connect finops.nexeeo.com:443 2>/dev/null   | openssl x509 -noout -subject -dates -ext subjectAltName
+```
 
 ---
 
@@ -1161,14 +1249,22 @@ caminho que possa divergir.
 
 **Operação e segurança**
 
-1. **HTTPS existe, mas ainda não está publicado.** O Nginx Proxy Manager está
-   instalado e alcança o portal (ver seção 7.1), o Elastic IP está associado e as
-   portas 80/443 estão abertas. Falta um passo: `www.nexeeo.com` aponta para o
-   domínio errado na zona DNS, e sem os três nomes resolvendo o certificado não
-   sai — ver [docs/dns-nexeeo.md](docs/dns-nexeeo.md), seção 2. Até o certificado
-   ser emitido, o acesso continua por túnel SSH para `127.0.0.1`, e
-   `APP_BIND=0.0.0.0` continua proibido: sem TLS, sessão e dado financeiro
-   trafegam em claro.
+1. **O Metabase está exposto em HTTP sem TLS.** O portal já está em HTTPS
+   (seção 7.1), mas `finops-metabase` continua publicado em `0.0.0.0:3000` e
+   alcançável da internet, servindo dado financeiro — login inclusive — em texto
+   claro. É o item de segurança mais urgente do ambiente. Correção: criar
+   `metabase.nexeeo.com`, publicá-lo pelo proxy com certificado e Access List por
+   IP, e só então trocar a publicação para `127.0.0.1:3000:3000`. O procedimento
+   com rollback está em `/opt/nginx-proxy-manager/README-operacao.md`, seção 6.
+   Isso reinicia o Metabase, então exige janela combinada.
+
+   Ainda sobre o Metabase: a conexão de dados dele usa `finops_user`, que é
+   **superusuário do cluster**. Uma pergunta SQL nativa pode ler `app_users` ou
+   remover tabelas. A correção é um papel somente-leitura repontado no painel do
+   Metabase.
+
+   `APP_BIND` continua em `127.0.0.1`: a porta 8080 não deve ser publicada, porque
+   quem entra por ela pula TLS, `Block Common Exploits` e o log por host.
 2. **O bloqueio de força bruta é por processo.** Fica na memória do container
    (5 tentativas / 15 min, bloqueio de 5 min). Com mais de uma réplica, cada uma
    conta separado. A evolução natural é uma tabela ou Redis.
