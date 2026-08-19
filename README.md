@@ -19,6 +19,7 @@ substituir nem alterar nenhum dos dois.
 | [assets/logos/](assets/logos/) | Identidade visual VERI |
 
 - **[docs/RUNBOOK-app.md](docs/RUNBOOK-app.md)** — deploy detalhado, role do banco, riscos
+- **[docs/dns-nexeeo.md](docs/dns-nexeeo.md)** — domínio de produção `nexeeo.com`, estado do DNS e checklist antes de emitir SSL
 - **[docs/schema-snapshot.md](docs/schema-snapshot.md)** — schema real e achados de qualidade do dado
 - **[docs/API-dados.md](docs/API-dados.md)** — endpoints, filtros e contrato de resposta
 - **[docs/DECISOES-dataviz.md](docs/DECISOES-dataviz.md)** — paleta validada e regras de gráfico
@@ -760,6 +761,71 @@ container vai para outra rede e o host `postgres` deixa de resolver.
 
 ---
 
+## 7.1 Domínio público e HTTPS
+
+Domínios oficiais de produção:
+
+| | |
+|---|---|
+| Portal | `https://nexeeo.com` · `https://www.nexeeo.com` · `https://finops.nexeeo.com` |
+| Elastic IP | `3.23.68.121` |
+| Proxy | `nginx-proxy-manager`, em `/opt/nginx-proxy-manager` na EC2 |
+| Destino | `finops-portal:3000` pela rede Docker `npm-public` |
+
+**Atenção ao domínio: `nexeeo`, com dois `e`.** `nexxeo.com` (dois `x`) é de
+terceiro e foi usado por engano em documentação anterior. O typo ainda está vivo
+na zona DNS — ver a seção 2 de [docs/dns-nexeeo.md](docs/dns-nexeeo.md).
+
+### Proxy host no NPM
+
+| Campo | Valor |
+|---|---|
+| Domain Names | `nexeeo.com`, `www.nexeeo.com`, `finops.nexeeo.com` |
+| Scheme | `http` |
+| Forward Hostname / IP | `finops-portal` |
+| Forward Port | `3000` |
+| Block Common Exploits | ON |
+| Websockets Support | ON |
+| SSL | `Request a new SSL Certificate`, Force SSL ON, HTTP/2 ON, HSTS **OFF** |
+
+Os três nomes vão no **mesmo** proxy host. `Forward Hostname` é o nome do
+container, não `localhost` — dentro do NPM, `localhost` é o próprio NPM. E
+`Forward Port` é a porta **interna** (`3000`), não a publicada no host (`8080`).
+
+### A aplicação não sabe o domínio, e isso é de propósito
+
+Nenhuma URL absoluta é construída pelo código: redirecionamentos e exportações
+usam caminho relativo, e o cookie é `httpOnly`, `sameSite=lax` e `Secure`.
+Consequências:
+
+- trocar de domínio **não exige mudança de código nem novo build**;
+- login, logout e exportações funcionam atrás do proxy sem configuração extra —
+  o `Secure` do cookie é satisfeito porque quem fala HTTPS é o **navegador**,
+  ainda que o trecho proxy → container seja HTTP interno;
+- `APP_URL`, `PUBLIC_APP_URL` e `ALLOWED_ORIGINS` no `.env.example` são
+  **documentação do domínio**, não configuração ativa. Estão marcadas como tal
+  no próprio arquivo.
+
+### Validação do DNS
+
+```bash
+dig +short NS nexeeo.com
+dig @a.gtld-servers.net nexeeo.com NS +short
+dig +short nexeeo.com                 # 3.23.68.121
+dig +short www.nexeeo.com             # hoje falha -- ver docs/dns-nexeeo.md
+dig +short finops.nexeeo.com          # 3.23.68.121
+
+curl -I http://nexeeo.com
+curl -I https://nexeeo.com
+curl -I https://www.nexeeo.com
+curl -I https://finops.nexeeo.com
+```
+
+Operação do proxy, renovação de certificado, Access List do Metabase e rollback:
+`/opt/nginx-proxy-manager/README-operacao.md` na EC2.
+
+---
+
 ## 8. Como implantar na EC2
 
 ```bash
@@ -1095,10 +1161,14 @@ caminho que possa divergir.
 
 **Operação e segurança**
 
-1. **Não há HTTPS.** O acesso é por túnel SSH para `127.0.0.1`. Antes de expor o
-   portal a usuários de gestão (`APP_BIND=0.0.0.0`), é obrigatório Nginx +
-   HTTPS + Security Group restrito. Sem isso, sessão e dado financeiro trafegam
-   em claro.
+1. **HTTPS existe, mas ainda não está publicado.** O Nginx Proxy Manager está
+   instalado e alcança o portal (ver seção 7.1), o Elastic IP está associado e as
+   portas 80/443 estão abertas. Falta um passo: `www.nexeeo.com` aponta para o
+   domínio errado na zona DNS, e sem os três nomes resolvendo o certificado não
+   sai — ver [docs/dns-nexeeo.md](docs/dns-nexeeo.md), seção 2. Até o certificado
+   ser emitido, o acesso continua por túnel SSH para `127.0.0.1`, e
+   `APP_BIND=0.0.0.0` continua proibido: sem TLS, sessão e dado financeiro
+   trafegam em claro.
 2. **O bloqueio de força bruta é por processo.** Fica na memória do container
    (5 tentativas / 15 min, bloqueio de 5 min). Com mais de uma réplica, cada uma
    conta separado. A evolução natural é uma tabela ou Redis.

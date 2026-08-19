@@ -30,10 +30,19 @@ camada de visão executiva e governança.
   │ finops-portal    │───────>│ postgres:5432    │<───────│ finops-metabase  │
   │ (Next.js, :3000) │  DNS   │ (finops-postgres)│        │ (:3000 -> :3000) │
   └────────┬─────────┘        └──────────────────┘        └──────────────────┘
-           │ publicado em 127.0.0.1:3001 por padrão
+           │ publicado em 127.0.0.1:8080 na EC2 (APP_PORT no .env)
            v
-     túnel SSH / Nginx+HTTPS (a definir antes de liberar a usuários)
+  ┌──────────────────────┐
+  │ nginx-proxy-manager  │  rede npm-public, alcanca finops-portal:3000
+  │ 80/443 publicas      │  /opt/nginx-proxy-manager
+  └──────────┬───────────┘
+             v
+   https://nexeeo.com  ·  www.nexeeo.com  ·  finops.nexeeo.com
+   (certificado PENDENTE -- ver docs/dns-nexeeo.md, secao 2)
 ```
+
+Dominio de producao: **`nexeeo.com`**, com dois `e`. `nexxeo.com` (dois `x`) e de
+terceiro e foi usado por engano em documentacao anterior.
 
 - A porta 5432 continua publicada **apenas** em `127.0.0.1` pelo compose original.
   A aplicação nunca precisa dela: fala com `postgres` por DNS interno.
@@ -246,6 +255,15 @@ ssh -L 3001:127.0.0.1:3001 ubuntu@<ip-da-ec2>
 Só troque `APP_BIND` para `0.0.0.0` **depois** de colocar Nginx + HTTPS na frente
 e restringir o Security Group — a mesma recomendação já registrada para a porta
 3000 do Metabase.
+
+Situação em 19/08/2026: o Nginx Proxy Manager já está instalado e alcança o
+portal pela rede `npm-public`, o Elastic IP `3.23.68.121` está associado e as
+portas 80/443 estão abertas. **Falta apenas o certificado**, bloqueado porque
+`www.nexeeo.com` aponta para o domínio errado na zona DNS — ver
+[dns-nexeeo.md](dns-nexeeo.md), seção 2. Enquanto o certificado não sair,
+`APP_BIND` continua em `127.0.0.1`: publicar sem TLS é exatamente o que esta
+recomendação evita. Operação do proxy em
+`/opt/nginx-proxy-manager/README-operacao.md`, na EC2.
 
 ---
 

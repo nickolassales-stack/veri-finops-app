@@ -48,6 +48,24 @@ services:
     depends_on:
       - postgres
 
+    # Duas redes, com papeis distintos:
+    #   default    -- a rede do projeto compose de producao (finops_default). E
+    #                 por ela que o nome `postgres` resolve.
+    #   npm-public -- a rede do Nginx Proxy Manager, criada por
+    #                 /opt/nginx-proxy-manager/docker-compose.yml. E por ela que
+    #                 o proxy alcanca este container pelo nome `finops-portal`.
+    #
+    # Declarar aqui em vez de usar `docker network connect`: a conexao feita a
+    # mao nao sobrevive a um `up -d --force-recreate`, e o site cairia no
+    # proximo deploy sem ninguem entender por que.
+    #
+    # `external: true` significa "esta rede ja existe, nao crie e nao remova".
+    # Se o NPM nao estiver instalado, o compose falha alto dizendo que a rede
+    # nao existe -- melhor do que subir sem rota para o proxy.
+    networks:
+      - default
+      - npm-public
+
     environment:
       NODE_ENV: production
       PORT: "3000"
@@ -134,3 +152,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  # Criada e mantida por /opt/nginx-proxy-manager/docker-compose.yml.
+  npm-public:
+    name: npm-public
+    external: true
