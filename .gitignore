@@ -41,6 +41,13 @@ venv/
 # O snapshot revisado e versionado manualmente em docs/schema-snapshot.md
 scripts/out/
 
+# ---- Coletor OVH (POC) ----
+# `out/` ja e coberto pela regra generica acima, mas fica explicito aqui: o
+# resultado da POC e sanitizado, e ainda assim revela quanto a empresa gasta e
+# em que. Nunca versionar.
+scripts/ovh-collector/out/
+scripts/ovh-collector/venv/
+
 # ---- SO / editores ----
 .DS_Store
 Thumbs.db
