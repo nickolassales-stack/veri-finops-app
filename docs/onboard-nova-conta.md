@@ -191,9 +191,48 @@ diferente do CUR 2.0, dois desfechos, ambos ruins:
   Custo vira regiao, data vira servico. Nao ha erro; ha numero errado.
 
 O passo 8 do script compara coluna por coluna com a conta piloto e mostra o
-`diff` quando divergem. Se divergir, a view precisa **listar as colunas
-explicitamente**, na mesma ordem, em vez de `SELECT *` -- e ai vale abrir uma
-tarefa em vez de improvisar no terminal.
+`diff` quando divergem, e sai com codigo 1. Se divergir, a view precisa **listar
+as colunas explicitamente**, na mesma ordem, em vez de `SELECT *`.
+
+### Isso aconteceu em 20/08/2026
+
+As contas `891377338363` (Conta-Gest) e `683745271637` (Conta-cognitivo)
+entregaram CUR **sem `line_item_resource_id`** -- 115 colunas contra as 116 das
+contas antigas. Causa: o Data Export foi criado sem marcar a inclusao de resource
+IDs. Nao e versao diferente do CUR 2.0: e uma opcao de configuracao do export.
+
+Solucao aplicada, em `scripts/gerar-view-cur-raw.py`: o gerador le a ordem de
+colunas da tabela de referencia no Glue, **verifica que as tabelas completas
+batem exatamente** e que as incompletas **diferem apenas pela coluna esperada**
+-- aborta se nao for o caso -- e emite a view com
+
+```sql
+CAST(NULL AS varchar) AS line_item_resource_id
+```
+
+na posicao original, para as duas contas sem a coluna. O tipo casado e a posicao
+preservada e o que impede o embaralhamento descrito acima.
+
+O ETL nao le `line_item_resource_id` (confirmado em
+`athena_to_postgres.py`), entao nenhuma tela perde funcao. O que se perde e
+analise por recurso nessas duas contas -- justamente o que seria necessario para
+investigar um recurso dominante de custo.
+
+**Correcao definitiva:** habilitar resource IDs nos dois Data Exports no console.
+Na entrega seguinte as quatro tabelas voltam a ter schema identico e a view pode
+voltar a ser `SELECT *`. Rodar o gerador de novo: ele detecta que nao ha mais
+coluna faltante e emite a lista completa nos quatro bracos.
+
+### Backup antes de trocar a view
+
+`CREATE OR REPLACE VIEW` nao guarda historico. Antes de aplicar:
+
+```bash
+aws glue get-table --database-name finops --name cur_raw   > /opt/finops/backups/cur_raw-$(date +%F-%H%M).json
+```
+
+O `ViewOriginalText` e um Presto view em base64; o SQL sai com
+`json.loads(base64.b64decode(...))["originalSql"]`.
 
 ---
 
