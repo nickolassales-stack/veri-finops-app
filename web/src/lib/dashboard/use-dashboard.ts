@@ -159,10 +159,17 @@ export function useDashboard(filtros: FiltrosDashboard): DadosDashboard {
 }
 
 /**
- * Cadastro de contas, para montar o filtro.
+ * Cadastro de contas AWS, para montar o filtro.
  *
  * Buscado uma vez so: nao depende de periodo nem de conta selecionada. Nenhum
- * id de conta e fixo no codigo -- a lista inteira vem de `cloud_accounts`.
+ * id de conta e fixo no codigo -- a lista vem de `cloud_accounts`.
+ *
+ * `provider=aws` NAO e cosmetico. As telas que usam este hook -- executivo,
+ * analitico e historico -- leem `aws_daily_costs` e `aws_monthly_costs`. Uma
+ * conta OVH na lista seria selecionavel e devolveria zero; hoje o servidor
+ * recusa com 400, e este filtro impede que a opcao apareca em primeiro lugar.
+ * As duas camadas existem de proposito: a de cima evita a confusao, a de baixo
+ * cobre URL montada a mao.
  */
 export function useContas(): Recurso<Conta[]> & { carregando: boolean } {
   const [estado, setEstado] = useState<Recurso<Conta[]> & { carregando: boolean }>({
@@ -178,7 +185,12 @@ export function useContas(): Recurso<Conta[]> & { carregando: boolean } {
       try {
         const { dados } = await buscarRecurso<Conta[]>(
           "/api/accounts",
-          new URLSearchParams({ tamanho: "200", ordenarPor: "nome", direcao: "asc" }),
+          new URLSearchParams({
+            tamanho: "200",
+            ordenarPor: "nome",
+            direcao: "asc",
+            provider: "aws",
+          }),
           controlador.signal,
         );
         if (!controlador.signal.aborted) {

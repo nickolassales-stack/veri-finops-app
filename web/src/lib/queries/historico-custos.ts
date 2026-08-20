@@ -401,7 +401,8 @@ export async function getOpcoesDeCadastro(): Promise<OpcoesDeCadastro> {
             ${expressaoCampoDaConta(comAlias, "cost_center", amarracao)}   AS centro_de_custo,
             ${expressaoCampoDaConta(comAlias, "environment", amarracao)}   AS ambiente
        FROM cloud_accounts a
-       ${joinAlias(comAlias, amarracao)}`,
+       ${joinAlias(comAlias, amarracao)}
+      WHERE coalesce(a.provider, 'aws') = 'aws'`,
   );
 
   const distintos = (ler: (l: (typeof linhas)[number]) => string | null) =>

@@ -30,6 +30,14 @@ export type ContaAdministravel = {
   ativa: boolean;
   /** `true` quando ja existe linha em `app_account_settings`. */
   configurada: boolean;
+  /**
+   * `cloud_accounts.provider`. Somente leitura nesta tela: trocar o provider de
+   * uma conta que ja tem custo carregado a desligaria da sua origem de dado --
+   * uma conta AWS marcada como OVH desapareceria do painel e nao apareceria em
+   * Faturamento, porque nao existe linha correspondente em `ovh_monthly_costs`.
+   * O cadastro do provider e do onboarding, nao da tela de alias.
+   */
+  provider: string;
 };
 
 const SELECAO = `
@@ -46,7 +54,8 @@ const SELECAO = `
   (s.account_id IS NOT NULL) AS configurada,
   a.business_unit  AS cad_business_unit,
   a.cost_center    AS cad_cost_center,
-  a.environment    AS cad_environment
+  a.environment    AS cad_environment,
+  a.provider
 `;
 
 type LinhaConta = {
@@ -64,6 +73,7 @@ type LinhaConta = {
   cad_business_unit: string | null;
   cad_cost_center: string | null;
   cad_environment: string | null;
+  provider: string | null;
   nome_exibicao: string;
 };
 
@@ -83,6 +93,7 @@ function mapear(l: LinhaConta): ContaAdministravel {
     paymentStatusUpdatedAt: l.payment_status_updated_at?.toISOString() ?? null,
     ativa: l.active ?? false,
     configurada: l.configurada,
+    provider: l.provider ?? "aws",
   };
 }
 

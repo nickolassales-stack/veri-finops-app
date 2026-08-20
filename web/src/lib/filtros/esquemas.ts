@@ -176,6 +176,58 @@ export const camposContas = {
   contas: listaContas.optional().transform((v) => v ?? []),
 };
 
+// ------------------------------------------------------------------ provider
+
+/**
+ * Provedores de nuvem que o cadastro reconhece. Lista FECHADA.
+ *
+ * `cloud_accounts.provider` e `text` com default 'aws' -- o banco aceita
+ * qualquer string. A allowlist vive aqui porque a aplicacao nao deve gravar nem
+ * filtrar por um provedor que ela nao sabe consultar: uma conta com
+ * provider='azure' nao teria tabela de custo nenhuma e apareceria como zero.
+ */
+export const PROVIDERS = ["aws", "ovh"] as const;
+
+export type Provider = (typeof PROVIDERS)[number];
+
+const CONJUNTO_PROVIDERS: ReadonlySet<string> = new Set(PROVIDERS);
+
+export function ehProvider(valor: string): valor is Provider {
+  return CONJUNTO_PROVIDERS.has(valor);
+}
+
+/** `?provider=aws`, `?provider=ovh` ou `?provider=all`. */
+export const camposProvider = {
+  provider: z
+    .enum([...PROVIDERS, "all"], {
+      error: () => `Provider deve ser um de: ${[...PROVIDERS, "all"].join(", ")}.`,
+    })
+    .default("all"),
+};
+
+// ---------------------------------------------------------------- fonte OVH
+
+/**
+ * `ovh_monthly_costs.source` -- as tres origens NAO se somam.
+ *
+ * `invoice` e o que foi faturado; `usage_current` e o consumo do mes em
+ * andamento; `usage_forecast` e projecao. O mesmo projeto no mesmo mes tem
+ * legitimamente linha nas tres, e somar as tres triplica o custo. Por isso a
+ * origem e sempre escolha explicita, nunca um filtro opcional que some tudo
+ * quando ausente.
+ */
+export const FONTES_OVH = ["invoice", "usage_current", "usage_forecast"] as const;
+
+export type FonteOvh = (typeof FONTES_OVH)[number];
+
+export const camposFonteOvh = {
+  source: z
+    .enum(FONTES_OVH, {
+      error: () => `Origem OVH deve ser uma de: ${FONTES_OVH.join(", ")}.`,
+    })
+    .optional(),
+};
+
 // -------------------------------------------------------------------- regiao
 
 /**

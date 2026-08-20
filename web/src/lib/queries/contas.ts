@@ -6,7 +6,7 @@ import {
   identificadorPermitido,
   query,
 } from "@/lib/database";
-import type { Direcao } from "@/lib/filtros/esquemas";
+import type { Direcao, Provider } from "@/lib/filtros/esquemas";
 
 import { aliasDisponivel, expressaoNomeDaConta, joinAlias } from "./alias-conta";
 
@@ -46,6 +46,12 @@ export type Conta = {
   costCenter: string | null;
   environment: string | null;
   active: boolean;
+  /**
+   * `cloud_accounts.provider`. Sempre presente na resposta, inclusive quando o
+   * filtro nao foi informado: quem consome precisa poder distinguir uma conta
+   * AWS de uma OVH sem fazer uma segunda chamada.
+   */
+  provider: string;
 };
 
 export type ListaContas = {
@@ -56,6 +62,8 @@ export type ListaContas = {
 export type ParametrosListaContas = {
   busca?: string;
   apenasAtivas: boolean;
+  /** `"all"` (ou ausente) devolve todos os provedores. */
+  provider?: Provider | "all";
   ordenarPor: OrdenacaoConta;
   direcao: Direcao;
   pagina: number;
@@ -72,6 +80,13 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
 
   if (p.apenasAtivas) {
     condicoes.push("a.active");
+  }
+
+  if (p.provider && p.provider !== "all") {
+    // Vai como PARAMETRO. O valor ja passou pelo enum do Zod, mas concatenar
+    // um provider no texto do SQL criaria um caminho de input do usuario para
+    // dentro da query sem nenhuma necessidade.
+    condicoes.push(`a.provider = ${params.add(p.provider)}`);
   }
 
   if (p.busca) {
@@ -110,6 +125,7 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
     cost_center: string | null;
     environment: string | null;
     active: boolean | null;
+    provider: string | null;
     total_geral: string;
   }>(
     `
@@ -119,6 +135,7 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
            a.cost_center,
            a.environment,
            a.active,
+           a.provider,
            count(*) OVER () AS total_geral
       FROM cloud_accounts a
       ${joinAlias(comAlias, amarracao)}
@@ -138,6 +155,10 @@ export async function listarContas(p: ParametrosListaContas): Promise<ListaConta
       costCenter: l.cost_center,
       environment: l.environment,
       active: l.active ?? false,
+      // O DEFAULT da coluna e 'aws', mas ela e NULLABLE: linha inserida com
+      // provider explicitamente nulo existiria. Tratada como AWS porque foi
+      // assim que o cadastro nasceu -- so contas AWS existiam.
+      provider: l.provider ?? "aws",
     })),
   };
 }
@@ -186,4 +207,36 @@ export async function filtrarContasInexistentes(ids: string[]): Promise<string[]
 
   const existentes = new Set(linhas.map((l) => l.account_id));
   return ids.filter((id) => !existentes.has(id));
+}
+
+/**
+ * Contas pedidas que NAO sao do provedor informado.
+ *
+ * Existe pelo mesmo motivo de `filtrarContasInexistentes`, e para um caso mais
+ * traicoeiro: a conta OVH EXISTE em `cloud_accounts`, entao passa naquela
+ * verificacao -- mas nao tem uma unica linha em `aws_daily_costs`. Sem esta
+ * checagem, selecionar a conta OVH numa tela AWS devolve "US$ 0,00" com cara de
+ * resposta legitima, e quem le conclui que a conta nao gastou nada.
+ *
+ * Devolve os ids divergentes com o provider de cada um, para que a mensagem de
+ * erro possa dizer QUAL conta e de QUAL provedor em vez de so recusar.
+ */
+export async function contasDeOutroProvider(
+  ids: string[],
+  provider: Provider,
+): Promise<{ accountId: string; provider: string }[]> {
+  if (ids.length === 0) return [];
+
+  const linhas = await query<{ account_id: string; provider: string | null }>(
+    `SELECT account_id, provider
+       FROM cloud_accounts
+      WHERE account_id = ANY($1)
+        AND coalesce(provider, 'aws') <> $2`,
+    [ids, provider],
+  );
+
+  return linhas.map((l) => ({
+    accountId: l.account_id,
+    provider: l.provider ?? "aws",
+  }));
 }

@@ -269,35 +269,54 @@ SELECT provider_account_id, project_service_name, billing_month,
 
 ---
 
-## 9. Pendencias para o dashboard
+## 9. O que o portal ja le, e o que falta
 
-O portal **ainda nao le** nenhuma dessas tabelas. Em ordem:
+### Feito em 20/08/2026: separacao por provider na interface
 
-1. **Cadastrar a conta em `cloud_accounts`** com `provider = 'ovh'`. A coluna ja
-   existe, com default `'aws'`. Sem cadastro, a consulta 5 acima acusa, e a conta
-   apareceria sem alias.
+O portal le as tabelas `ovh_*` em **duas telas**, e deliberadamente NAO as le nas
+outras. O detalhamento completo esta na secao 5.2 do README; o resumo:
 
-2. **Decidir a moeda de referencia.** A conta OVH tem moeda propria
+| Tela | Contas OVH |
+|---|---|
+| Visao executiva, analitico, exportacoes | **nao aparecem** -- selo "Visao AWS" |
+| Faturamento | secao "OVHcloud" com tres cards por `source` e tabela mensal |
+| Diagnostico | bloco "OVH Collector" lendo `ovh_sync_runs` |
+| Admin > Contas | aparecem, com selo do provedor |
+
+A conta `ovh-main-ca` foi cadastrada em `cloud_accounts` com `provider='ovh'` e
+alias em `app_account_settings` -- o item 1 da lista anterior, concluido.
+
+**Conta OVH numa tela AWS agora da 400, nao zero.** A barreira esta em
+`montarFiltro()`, funil de toda leitura de custo AWS: cinco endpoints do painel,
+tres do analitico e as duas exportacoes. Era o defeito central: a conta OVH
+existe no cadastro, passa em qualquer verificacao de existencia, e nao tem uma
+linha em `aws_daily_costs` -- o resultado seria `US$ 0,00` com cara de resposta
+legitima.
+
+### O que falta
+
+1. **Decidir a moeda de referencia.** A conta OVH tem moeda propria
    (`ovh_provider_accounts.currency`) que pode nao ser a da AWS. Somar provedores
    exige escolher a moeda e a data da cotacao -- decisao de negocio antes de ser
    de codigo. O portal ja tem provedor de cotacao (`EXCHANGE_RATE_PROVIDER`),
    hoje usado so para exibir BRL estimado.
 
-3. **Criar a view de unificacao**, so depois de 1 e 2. Precisa resolver:
+2. **Criar a view de unificacao**, so depois da decisao de moeda. Precisa resolver:
    granularidade (AWS e diaria, OVH e mensal), e qual `source` da OVH representa
    custo realizado -- provavelmente `invoice` para meses fechados e
    `usage_current` para o mes corrente, o que e uma regra, nao um `UNION`.
 
-4. **Ajustar as telas.** Filtro de contas, analitico e exportacao assumem uma
-   linha por dia; OVH so tem mes. Decidir se o mes vira uma linha no primeiro dia
-   ou se a tela passa a ter granularidade variavel por provedor.
+3. **Unificar a granularidade nas telas AWS**, se a decisao for exibir os dois
+   provedores juntos. Filtro de contas, analitico e exportacao assumem uma linha
+   por dia; OVH so tem mes. Enquanto isso nao for resolvido, a separacao atual e
+   a resposta: cada tela le o que sabe ler, e diz qual recorte esta mostrando.
 
-5. **Estender a tela de Diagnostico** para ler `ovh_sync_runs` junto de
-   `app_etl_runs`. Um collector que ninguem ve falhar e um collector que falha
-   sem ninguem ver.
+4. **Instalar o cron OVH.** Preparado em `cron-ovh.exemplo`, nao instalado. O
+   bloco de Diagnostico declara esse estado explicitamente -- e declara, nao
+   mede: o portal roda em container sem acesso ao crontab do host, mesma
+   limitacao da agenda do ETL AWS.
 
-Nada disso foi feito nesta entrega: sem dado real coletado, decidir granularidade
-e moeda seria adivinhar o formato do problema antes de te-lo.
+O item 5 da lista anterior -- estender o Diagnostico -- foi concluido.
 
 ---
 

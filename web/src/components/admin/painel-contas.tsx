@@ -7,6 +7,7 @@ import { Botao } from "@/components/ui/botao";
 import { Campo } from "@/components/ui/campo";
 import { Card } from "@/components/ui/card";
 import { CarregandoLinhas, ErroDoBloco, Vazio } from "@/components/ui/estado";
+import { SeloProvider } from "@/components/ui/selo-provider";
 import { escrever, ler, mensagemDoErro } from "@/lib/admin/cliente";
 // De `@/lib/billing/pagamento`, que e puro -- e NAO de `esquemas-admin`, que
 // puxa `password.mjs` e com ele o `node:crypto` para dentro do navegador.
@@ -25,6 +26,8 @@ type Conta = {
   paymentStatusUpdatedAt: string | null;
   ativa: boolean;
   configurada: boolean;
+  /** Somente leitura aqui -- ver o comentario do tipo em queries/admin/contas.ts. */
+  provider: string;
 };
 
 /**
@@ -102,7 +105,14 @@ export function PainelContas() {
         <p>
           O nome definido aqui substitui o do cadastro nos filtros, nos cards, na tabela
           analítica e nos arquivos exportados. O <strong>ID da conta</strong> continua
-          sempre visível ao lado — é ele que identifica a conta na AWS.
+          sempre visível ao lado — é ele que identifica a conta no provedor.
+        </p>
+        <p>
+          Esta lista traz <strong>todos os provedores</strong>. O selo ao lado de cada
+          conta diz qual é. Contas OVH aparecem aqui e em Faturamento, mas não nos
+          filtros do painel executivo nem do analítico, que hoje leem apenas dados AWS.
+          O provedor em si não é editável: trocá-lo desligaria a conta da sua origem de
+          dado.
         </p>
       </Aviso>
 
@@ -112,15 +122,18 @@ export function PainelContas() {
           titulo={conta.nomeExibicao}
           descricao={`ID ${conta.accountId}${conta.ativa ? "" : " · inativa no cadastro"}`}
           acao={
-            <Botao
-              tom="secundario"
-              onClick={() =>
-                setEditando((atual) => (atual === conta.accountId ? null : conta.accountId))
-              }
-              aria-expanded={editando === conta.accountId}
-            >
-              {editando === conta.accountId ? "Fechar" : "Editar"}
-            </Botao>
+            <div className="flex items-center gap-2">
+              <SeloProvider provider={conta.provider} />
+              <Botao
+                tom="secundario"
+                onClick={() =>
+                  setEditando((atual) => (atual === conta.accountId ? null : conta.accountId))
+                }
+                aria-expanded={editando === conta.accountId}
+              >
+                {editando === conta.accountId ? "Fechar" : "Editar"}
+              </Botao>
+            </div>
           }
         >
           {editando === conta.accountId ? (
@@ -136,6 +149,8 @@ export function PainelContas() {
 
 function ResumoConta({ conta }: { conta: Conta }) {
   const itens: { rotulo: string; valor: string }[] = [
+    { rotulo: "Provedor", valor: conta.provider.toUpperCase() },
+    { rotulo: "ID da conta", valor: conta.accountId },
     {
       rotulo: "Alias",
       valor: conta.alias ?? `— (usando "${conta.accountName}" do cadastro)`,

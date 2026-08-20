@@ -1,5 +1,6 @@
 import { ListaAlertas } from "@/components/diagnostico/lista-alertas";
 import { PainelEtl } from "@/components/diagnostico/painel-etl";
+import { PainelOvh } from "@/components/diagnostico/painel-ovh";
 import { SeloSituacao } from "@/components/diagnostico/selo-situacao";
 import { TabelaFrescor } from "@/components/diagnostico/tabela-frescor";
 import { Aviso } from "@/components/ui/aviso";
@@ -10,6 +11,7 @@ import { getEnv } from "@/lib/env";
 import { formatDataDia, formatDataHora, formatInteiro } from "@/lib/format";
 import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico";
 import { montarDiagnostico } from "@/lib/services/diagnostico";
+import { montarVisaoOvh } from "@/lib/services/ovh";
 
 /**
  * Saude do pipeline FinOps.
@@ -55,7 +57,12 @@ export default async function DiagnosticoPipelinePage() {
     );
   }
 
-  const d = await montarDiagnostico({ limiteHistorico: 10 });
+  // Dois pipelines independentes, duas montagens independentes. A tabela mensal
+  // da OVH nao interessa aqui, so o historico de execucoes -- por isso o limite 0.
+  const [d, ovh] = await Promise.all([
+    montarDiagnostico({ limiteHistorico: 10 }),
+    montarVisaoOvh(0),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -70,6 +77,12 @@ export default async function DiagnosticoPipelinePage() {
       </div>
 
       <ListaAlertas alertas={d.alertas} />
+
+      {/* FORA do ramo `d.instalado`: aquele booleano diz se o monitoramento do
+          ETL AWS existe, e o collector OVH nao depende dele. Amarrar os dois
+          esconderia o estado da OVH justamente quando o pipeline AWS esta pela
+          metade -- o momento em que saber o que ainda funciona importa mais. */}
+      <PainelOvh ovh={ovh} tz={tz} />
 
       {d.instalado ? (
         <>

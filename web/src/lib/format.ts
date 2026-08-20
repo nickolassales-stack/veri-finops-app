@@ -51,6 +51,45 @@ export function formatUSDCompacto(valor: unknown): string {
   return usdCompacto.format(toNumber(valor));
 }
 
+/**
+ * Valor em uma moeda ARBITRARIA, com o codigo sempre visivel.
+ *
+ * Existe para a OVH, cuja moeda vem por linha do banco em vez de ser fixa como
+ * no CUR. Nao converte nada: a moeda de referencia do portal e decisao de
+ * negocio pendente, e exibir "US$" num valor em euro seria pior do que exibir
+ * um codigo que o usuario nao esperava.
+ *
+ * Cache de `Intl.NumberFormat` por moeda: construir o formatador e caro e a
+ * tabela mensal chama isto por celula.
+ */
+const formatadoresPorMoeda = new Map<string, Intl.NumberFormat>();
+
+export function formatMoeda(valor: unknown, moeda: string): string {
+  const codigo = (moeda || "USD").toUpperCase();
+  let formatador = formatadoresPorMoeda.get(codigo);
+
+  if (!formatador) {
+    try {
+      formatador = new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: codigo,
+        currencyDisplay: "code",
+      });
+    } catch {
+      // Codigo de moeda que o ICU nao conhece. Cai para numero puro com o
+      // codigo colado -- nunca para uma moeda diferente da que esta no banco.
+      formatador = new Intl.NumberFormat("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    }
+    formatadoresPorMoeda.set(codigo, formatador);
+  }
+
+  const numero = formatador.format(toNumber(valor));
+  return numero.includes(codigo) ? numero : `${codigo} ${numero}`;
+}
+
 export function formatInteiro(valor: unknown): string {
   return inteiro.format(toNumber(valor));
 }

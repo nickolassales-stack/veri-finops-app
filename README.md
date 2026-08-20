@@ -21,7 +21,7 @@ substituir nem alterar nenhum dos dois.
 - **[docs/RUNBOOK-app.md](docs/RUNBOOK-app.md)** — deploy detalhado, role do banco, riscos
 - **[docs/dns-nexeeo.md](docs/dns-nexeeo.md)** — domínio de produção `nexeeo.com`, DNS, TLS e o incidente do CNAME
 - **[docs/onboard-nova-conta.md](docs/onboard-nova-conta.md)** — como adicionar uma conta AWS ao pipeline, com o script [scripts/onboard-cur-account.sh](scripts/onboard-cur-account.sh)
-- **[docs/ovh-finops.md](docs/ovh-finops.md)** — OVHcloud como segundo provedor: tabelas, collector, consultas de validação e pendências para o dashboard
+- **[docs/ovh-finops.md](docs/ovh-finops.md)** — OVHcloud como segundo provedor: tabelas, collector, consultas de validação e pendências para o dashboard. Como as telas separam os provedores: seção 5.2 deste README
 - **[scripts/ovh-collector/README.md](scripts/ovh-collector/README.md)** — como gerar as chaves da OVH e rodar a POC de exploração
 - **[docs/schema-snapshot.md](docs/schema-snapshot.md)** — schema real e achados de qualidade do dado
 - **[docs/API-dados.md](docs/API-dados.md)** — endpoints, filtros e contrato de resposta
@@ -698,6 +698,88 @@ A flag `AWS_INVOICING_ENABLED` (padrão `false`) existe para que a implementaç�
 futura nasça desligada. **Ligá-la hoje não ativa nada**: a consulta continua
 respondendo indisponível, e `podeGravarAutomaticamente()` devolve `false` por
 escrito — nenhuma resposta da AWS vira `paid` sem uma pessoa no meio.
+
+---
+
+## 5.2 Multi-cloud: como AWS e OVH convivem hoje
+
+O cadastro `cloud_accounts` tem contas de **dois provedores**, na coluna
+`provider`. A aplicação trata os dois de forma deliberadamente assimétrica
+enquanto a normalização não existe.
+
+| Tela | Lê | Contas OVH aparecem? |
+|---|---|---|
+| Visão executiva (`/dashboard`) | `aws_daily_costs` | **Não** — selo "Visão AWS" |
+| Analítico, as duas abas | `aws_daily_costs`, `aws_monthly_costs` | **Não** — selo "Visão AWS" |
+| Exportações CSV/XLSX | as mesmas tabelas AWS | **Não** — recusa com 400 |
+| Faturamento (`/dashboard/billing`) | `ovh_*` em seção própria | **Sim**, separadas |
+| Diagnóstico | `ovh_sync_runs` | **Sim**, bloco "OVH Collector" |
+| Admin › Contas | `cloud_accounts` inteira | **Sim**, com selo do provedor |
+
+### O total executivo é AWS, e a tela diz isso
+
+O número grande do painel **não inclui OVH**. Sem dizer o recorte, um total sem
+a OVH passaria por total da empresa — por isso o selo "Visão AWS" fica ao lado
+do título, e não num rodapé.
+
+### Conta OVH numa tela AWS dá erro 400, não zero
+
+Este é o defeito que a separação existe para eliminar. A conta OVH **existe** em
+`cloud_accounts`, então passa em qualquer verificação de existência, e não tem
+uma única linha em `aws_daily_costs`. Sem barreira, selecioná-la devolveria
+`US$ 0,00` com aparência de resposta legítima.
+
+A recusa fica em `montarFiltro()` ([web/src/lib/services/filtro-custo.ts](web/src/lib/services/filtro-custo.ts)),
+que é o funil de **toda** leitura de custo AWS — cinco endpoints do painel, três
+do analítico e as duas exportações. A regra vale para os dez sem que cada um
+precise repeti-la:
+
+> Esta tela exibe apenas contas AWS. Selecione contas AWS ou acesse
+> Faturamento/OVH.
+
+Há duas camadas de propósito: o filtro do front pede
+`/api/accounts?provider=aws`, então a opção nem aparece; e o servidor recusa,
+cobrindo URL montada à mão ou favorito antigo.
+
+Note a diferença de tratamento: conta **inexistente** é *aviso* (a tela abre com
+as outras, o total está só incompleto); conta de **outro provedor** é *erro* (o
+número resultante seria uma resposta errada, não incompleta).
+
+### `/api/accounts?provider=`
+
+`aws`, `ovh` ou `all`. Sem o parâmetro devolve **todas**, sempre com o campo
+`provider` preenchido. O padrão permissivo é proposital: o Admin não precisa
+saber quais provedores existem para listá-los, e um default `aws` esconderia
+contas OVH de quem não soubesse pedi-las.
+
+### As três origens da OVH não se somam
+
+`ovh_monthly_costs.source` separa três respostas para perguntas diferentes:
+
+| `source` | Significa |
+|---|---|
+| `invoice` | **Faturado** — o que a OVH cobrou |
+| `usage_current` | **Uso corrente** — consumo do mês em andamento, ainda não faturado |
+| `usage_forecast` | **Previsão** — projeção da OVH para o fechamento |
+
+O mesmo projeto no mesmo mês tem legitimamente linha nas três. Um
+`sum(amount)` sem `GROUP BY source` **triplica** o custo. Por isso Faturamento
+mostra **três cards** e nunca um total único.
+
+### O que ainda não existe
+
+- **Nada é somado entre AWS e OVH.** A AWS é diária e por uso; a OVH é mensal e
+  faturada. Somar produziria um número que não responde nem "quanto consumi" nem
+  "quanto vou pagar".
+- **Nenhuma conversão de moeda.** Cada linha OVH carrega `currency`, e a tela
+  exibe o código junto do valor. A moeda de referência de um total multi-cloud é
+  decisão de negócio em aberto.
+- **Cron OVH não instalado.** A coleta só roda quando alguém executa
+  `run-ovh-etl.sh` à mão. O bloco de Diagnóstico declara isso explicitamente —
+  e declara, não mede: o portal roda em container sem acesso ao crontab do host.
+- **Próxima fase:** view normalizada multi-cloud, que precisa resolver a
+  granularidade (diário × mensal), a moeda de referência e qual `source` da OVH
+  representa custo realizado.
 
 ---
 

@@ -2,10 +2,11 @@ import "server-only";
 
 import type { z } from "zod";
 
-import { analisar } from "@/lib/api/http";
+import { ErroDeApi, analisar } from "@/lib/api/http";
 import { lerParametros } from "@/lib/filtros/esquemas";
+import { mensagemDeProviderIncompativel } from "@/lib/filtros/provider";
 import { resolverPeriodo, type PresetPeriodo } from "@/lib/filtros/periodo";
-import { filtrarContasInexistentes } from "@/lib/queries/contas";
+import { contasDeOutroProvider, filtrarContasInexistentes } from "@/lib/queries/contas";
 import { getContextoTemporal } from "@/lib/queries/dashboard";
 import type { FiltroCusto } from "@/lib/queries/filtros-sql";
 
@@ -66,6 +67,19 @@ export async function montarFiltro(
   // Conta que nao existe no cadastro produziria "US$ 0,00" silencioso, e quem
   // digitou o id errado concluiria que a conta nao gastou nada.
   const contasInexistentes = await filtrarContasInexistentes(entrada.contas);
+
+  // Conta de OUTRO provedor e pior do que conta inexistente: ela existe no
+  // cadastro, passa na verificacao acima, e nao tem uma unica linha em
+  // `aws_daily_costs`. O resultado seria zero com cara de legitimo.
+  //
+  // Aqui e ERRO, nao aviso -- diferente do caso acima. Um aviso no `meta`
+  // depende de a tela decidir exibi-lo; um 400 nao tem como passar batido, e
+  // esta e a unica barreira entre uma conta OVH selecionada e um numero errado.
+  // Este e o funil de TODA leitura de custo AWS: os cinco endpoints do painel,
+  // os tres do analitico e as duas exportacoes.
+  const deOutroProvider = await contasDeOutroProvider(entrada.contas, "aws");
+  const recusa = mensagemDeProviderIncompativel(deOutroProvider, "aws");
+  if (recusa) throw new ErroDeApi("parametros-invalidos", recusa);
 
   const filtro: FiltroCusto = {
     periodo,

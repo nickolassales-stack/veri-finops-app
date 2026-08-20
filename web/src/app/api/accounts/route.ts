@@ -6,15 +6,22 @@ import {
   camposBusca,
   camposOrdenacao,
   camposPaginacao,
+  camposProvider,
   lerParametros,
 } from "@/lib/filtros/esquemas";
 import { CAMPOS_ORDENACAO_CONTA, listarContas } from "@/lib/queries/contas";
 
 /**
- * GET /api/accounts -- cadastro de contas AWS.
+ * GET /api/accounts -- cadastro de contas, de qualquer provedor.
  *
  * Fonte das opcoes de filtro do dashboard. Nenhum id de conta e fixo no
  * codigo: a lista sai inteira de `cloud_accounts`.
+ *
+ * `?provider=aws|ovh|all`. Sem o parametro devolve TODAS, sempre com o campo
+ * `provider` preenchido -- o padrao permissivo e proposital: quem quer a lista
+ * completa (o Admin) nao precisa saber quais provedores existem, e quem precisa
+ * de um recorte (o filtro do painel AWS) pede explicitamente. O contrario --
+ * default 'aws' -- esconderia contas OVH de quem nao soubesse pedi-las.
  */
 
 export const dynamic = "force-dynamic";
@@ -24,6 +31,7 @@ const esquema = z.object({
   ...camposBusca,
   ...camposPaginacao,
   ...camposOrdenacao(CAMPOS_ORDENACAO_CONTA, "nome", "asc"),
+  ...camposProvider,
   apenasAtivas: z
     .enum(["true", "false", "1", "0"])
     .default("false")
@@ -47,6 +55,7 @@ export const GET = rotaProtegida("GET /api/accounts", async ({ url }) => {
       filtros: {
         busca: entrada.busca ?? null,
         apenasAtivas: entrada.apenasAtivas,
+        provider: entrada.provider,
       },
     },
   };

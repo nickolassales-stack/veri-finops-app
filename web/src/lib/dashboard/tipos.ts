@@ -53,6 +53,8 @@ export type Conta = {
   costCenter: string | null;
   environment: string | null;
   active: boolean;
+  /** `cloud_accounts.provider`: "aws" ou "ovh". */
+  provider: string;
 };
 
 export type EstimativaBRL = {

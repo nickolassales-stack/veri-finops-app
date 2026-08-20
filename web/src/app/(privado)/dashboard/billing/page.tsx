@@ -1,4 +1,5 @@
 import { EditorConta } from "@/components/billing/editor-conta";
+import { SecaoOvh } from "@/components/billing/secao-ovh";
 import { SeloPagamento } from "@/components/billing/selo-pagamento";
 import { Aviso } from "@/components/ui/aviso";
 import { Card } from "@/components/ui/card";
@@ -6,6 +7,7 @@ import { podeAtual, requirePermissao } from "@/lib/auth/autorizacao";
 import { getEnv } from "@/lib/env";
 import { formatDataDia, formatDataHora, formatInteiro } from "@/lib/format";
 import { montarFaturamento } from "@/lib/services/billing";
+import { montarVisaoOvh } from "@/lib/services/ovh";
 
 /**
  * Faturamento: quando cada fatura fecha, quando vence, e o que se sabe sobre o
@@ -39,7 +41,10 @@ export default async function BillingPage() {
 
   const podeGerenciar = await podeAtual("billing:manage");
   const tz = getEnv().APP_TZ;
-  const f = await montarFaturamento();
+  // As duas montagens sao independentes: a OVH falhando nao pode derrubar o
+  // faturamento AWS, e vice-versa. `montarVisaoOvh` trata tabela ausente como
+  // estado, nao como erro, entao nao precisa de try/catch aqui.
+  const [f, ovh] = await Promise.all([montarFaturamento(), montarVisaoOvh()]);
 
   return (
     <div className="space-y-8">
@@ -47,7 +52,8 @@ export default async function BillingPage() {
         <h1 className="veri-display text-3xl text-veri-verde-escuro">Faturamento</h1>
         <p className="mt-2 max-w-3xl text-sm text-texto-suave">
           Fechamento e vencimento por conta AWS, e a situação de pagamento registrada.
-          Datas calculadas em {tz} · hoje é {formatDataDia(f.hoje)}.
+          Datas calculadas em {tz} · hoje é {formatDataDia(f.hoje)}. A seção OVHcloud,
+          no fim da página, tem granularidade própria e não entra nos números acima.
         </p>
       </div>
 
@@ -248,6 +254,8 @@ export default async function BillingPage() {
             />
           </Card>
         ))}
+
+      <SecaoOvh ovh={ovh} tz={tz} />
 
       <Card
         titulo="Por que o pagamento é registrado à mão"

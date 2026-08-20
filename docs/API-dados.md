@@ -92,13 +92,31 @@ Cadastro de contas, direto de `cloud_accounts`. **Nenhum id de conta é fixo no
 código** — é daqui que sai a lista de opções dos filtros.
 
 Parâmetros: `busca` (id, nome, unidade ou centro de custo), `apenasAtivas`,
-`ordenarPor` (`conta` · `nome` · `unidade` · `centroCusto` · `ambiente` ·
-`ativa`), `direcao`, `pagina`, `tamanho` (máx. 200).
+`provider` (`aws` · `ovh` · `all`), `ordenarPor` (`conta` · `nome` · `unidade` ·
+`centroCusto` · `ambiente` · `ativa`), `direcao`, `pagina`, `tamanho` (máx. 200).
 
 ```json
-{ "accountId": "800168045394", "accountName": "conta-piloto",
+{ "accountId": "800168045394", "accountName": "conta-piloto", "provider": "aws",
   "businessUnit": "ti", "costCenter": "TI-001", "environment": "prod", "active": true }
 ```
+
+`provider` ausente devolve **todas** as contas — o campo `provider` vem sempre
+preenchido, então quem consome distingue sem uma segunda chamada. O default
+permissivo é proposital: um default `aws` esconderia contas OVH de quem não
+soubesse pedi-las.
+
+Os filtros do painel executivo e do analítico pedem `provider=aws`, porque essas
+telas leem apenas tabelas AWS. Ver seção 5.2 do README.
+
+> **Contas de outro provedor nos endpoints de custo AWS resultam em `400`**, e
+> não em total zerado. Vale para os cinco endpoints de `/api/dashboard/*`, os
+> três de `/api/analytic/*` e as duas exportações — todos passam pelo mesmo
+> `montarFiltro()`. Código `parametros-invalidos`, mensagem:
+> *"Esta tela exibe apenas contas AWS. Selecione contas AWS ou acesse
+> Faturamento/OVH."*
+>
+> Diferente de conta **inexistente**, que é apenas aviso no `meta` — ali o total
+> está incompleto; aqui estaria errado.
 
 ### `GET /api/dashboard/summary`
 
