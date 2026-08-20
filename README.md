@@ -774,9 +774,12 @@ mostra **três cards** e nunca um total único.
 - **Nenhuma conversão de moeda.** Cada linha OVH carrega `currency`, e a tela
   exibe o código junto do valor. A moeda de referência de um total multi-cloud é
   decisão de negócio em aberto.
-- **Cron OVH não instalado.** A coleta só roda quando alguém executa
-  `run-ovh-etl.sh` à mão. O bloco de Diagnóstico declara isso explicitamente —
-  e declara, não mede: o portal roda em container sem acesso ao crontab do host.
+- **Cron OVH instalado em 20/08/2026** (`0 9 * * *` UTC, uma hora depois do ETL
+  AWS), depois de três coletas manuais com sucesso. O bloco de Diagnóstico
+  mostra o horário a partir de `OVH_CRON_INSTALADO` e `OVH_HORARIO_ESPERADO` —
+  e **declara, não mede**: o portal roda em container sem acesso ao crontab do
+  host, então mudar o cron sem mudar as variáveis faz a tela mentir. Rollback em
+  [docs/ovh-finops.md](docs/ovh-finops.md), seção 6.
 - **Próxima fase:** view normalizada multi-cloud, que precisa resolver a
   granularidade (diário × mensal), a moeda de referência e qual `source` da OVH
   representa custo realizado.

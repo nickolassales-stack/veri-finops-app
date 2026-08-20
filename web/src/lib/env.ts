@@ -108,6 +108,29 @@ const envSchema = z.object({
   ETL_TOLERANCIA_MINUTOS: z.coerce.number().int().positive().max(1440).default(90),
 
   /**
+   * O cron do collector OVH esta instalado no host?
+   *
+   * DECLARADO, NAO MEDIDO -- mesma limitacao de ETL_HORARIO_ESPERADO e pelo
+   * mesmo motivo: o portal roda em container sem acesso ao crontab do host, e
+   * ler o cron exigiria executar comando la fora. Entao a variavel pode divergir
+   * da realidade, e a tela diz explicitamente que o valor e declarado.
+   *
+   * O padrao e `false` porque instalacao nova nao tem cron nenhum. Foi instalado
+   * na EC2 de producao em 20/08/2026 (`0 9 * * *`), e la a variavel precisa
+   * valer `true` -- senao o Diagnostico afirma o contrario do que existe.
+   */
+  OVH_CRON_INSTALADO: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
+  /** Horario esperado do collector OVH, no fuso de ETL_FUSO_AGENDAMENTO. */
+  OVH_HORARIO_ESPERADO: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "OVH_HORARIO_ESPERADO deve ser HH:MM (24h)")
+    .default("09:00"),
+
+  /**
    * Idade a partir da qual uma execucao ainda aberta e dada por interrompida.
    * Precisa ser MAIOR que a duracao normal da carga -- hoje, segundos.
    */

@@ -153,13 +153,23 @@ export function PainelOvh({ ovh, tz }: { ovh: VisaoOvh; tz: string }) {
             mesmo motivo esta escrito em vez de verificado. */}
         <p className="text-xs text-texto-suave">
           Agendamento:{" "}
-          <span className="font-medium">
-            {ovh.cronInstalado ? "cron instalado" : "cron NÃO instalado"}
-          </span>
-          . A coleta OVH só roda quando alguém executa{" "}
-          <span className="veri-numero">run-ovh-etl.sh</span> à mão. Este estado é
-          declarado pela aplicação, não lido do crontab — o portal não tem acesso ao
-          host.
+          {ovh.cronInstalado ? (
+            <>
+              <span className="font-medium">cron instalado</span>, diariamente às{" "}
+              <span className="veri-numero">{ovh.horarioEsperado}</span> (
+              {ovh.fusoDoAgendador}).
+            </>
+          ) : (
+            <>
+              <span className="font-medium">cron NÃO instalado</span>. A coleta só roda
+              quando alguém executa <span className="veri-numero">run-ovh-etl.sh</span>{" "}
+              à mão.
+            </>
+          )}{" "}
+          Este estado vem de <span className="veri-numero">OVH_CRON_INSTALADO</span> e é{" "}
+          <strong>declarado</strong>, não lido do crontab — o portal roda em container
+          sem acesso ao host. Se alguém mudar o cron sem mudar a variável, esta linha
+          passa a mentir.
         </p>
       </div>
     </Card>

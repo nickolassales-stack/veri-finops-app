@@ -1,5 +1,6 @@
 import "server-only";
 
+import { getEnv } from "@/lib/env";
 import {
   getExecucoesOvh,
   getMensalOvh,
@@ -61,12 +62,18 @@ export type VisaoOvh = {
   mensal: LinhaMensalOvh[];
   alertas: AlertaOvh[];
   /**
-   * Estado do agendamento. Hoje SEMPRE false, e escrito na mao de proposito: o
-   * portal roda em container sem acesso ao crontab do host, entao nao ha como
-   * descobrir isso -- so declarar. Ver o comentario de `agendaConfigurada()` em
-   * services/diagnostico.ts, que tem a mesma limitacao pelo mesmo motivo.
+   * Estado do agendamento, vindo de `OVH_CRON_INSTALADO`.
+   *
+   * DECLARADO, NAO MEDIDO: o portal roda em container sem acesso ao crontab do
+   * host. Mesma limitacao de `agendaConfigurada()` em services/diagnostico.ts, e
+   * pelo mesmo motivo -- por isso a tela avisa que o valor e declarado, em vez de
+   * apresenta-lo como verificado.
    */
-  cronInstalado: false;
+  cronInstalado: boolean;
+  /** Horario declarado do agendamento, no fuso do agendador. */
+  horarioEsperado: string;
+  /** Fuso em que o agendador interpreta o horario acima. */
+  fusoDoAgendador: string;
   agora: string;
 };
 
@@ -193,6 +200,12 @@ export async function montarVisaoOvh(limiteMensal = 200): Promise<VisaoOvh> {
   // duas leituras de relogio poderiam classificar a mesma execucao de dois
   // jeitos dentro da mesma tela.
   const agora = new Date();
+  const env = getEnv();
+  const agendamento = {
+    cronInstalado: env.OVH_CRON_INSTALADO,
+    horarioEsperado: env.OVH_HORARIO_ESPERADO,
+    fusoDoAgendador: env.ETL_FUSO_AGENDAMENTO,
+  };
   const vazio = {
     instalado: false,
     temDado: false,
@@ -202,7 +215,7 @@ export async function montarVisaoOvh(limiteMensal = 200): Promise<VisaoOvh> {
     totaisPorOrigem: [],
     faturas: [],
     mensal: [],
-    cronInstalado: false as const,
+    ...agendamento,
     agora: agora.toISOString(),
   };
 
@@ -237,7 +250,7 @@ export async function montarVisaoOvh(limiteMensal = 200): Promise<VisaoOvh> {
     faturas,
     mensal,
     alertas: montarAlertas(situacao, ultima, ultimoSucesso, temDado, agora),
-    cronInstalado: false,
+    ...agendamento,
     agora: agora.toISOString(),
   };
 }

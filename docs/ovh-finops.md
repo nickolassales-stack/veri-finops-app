@@ -10,7 +10,7 @@ mesmo PostgreSQL que ja guarda o custo AWS -- **sem tocar no pipeline AWS**.
 | POC (exploracao) | `/opt/finops/ovh-collector/ovh_poc.py` |
 | Migracao | `scripts/migrations/005-ovh-collector.sql` ([rollback](../scripts/migrations/005-ovh-collector-rollback.sql)) |
 | Versionado em | `scripts/ovh-collector/` -- **sem o `.env`** |
-| Cron | **preparado, NAO instalado** -- ver secao 6 |
+| Cron | **instalado 20/08/2026**, `0 9 * * *` UTC -- ver secao 6 |
 
 > **Estado em 19/08/2026: primeira carga real concluida.** Conta `ovh-main-ca`
 > (`ovh80386@gmail.com`, endpoint `ovh-ca`, moeda **USD**), 39 faturas de
@@ -150,29 +150,110 @@ provedor, o outro e banco.
 
 ---
 
-## 6. Cron -- preparado, nao instalado
+## 6. Cron -- INSTALADO em 20/08/2026
 
-O agendamento esta em `/opt/finops/ovh-collector/cron-ovh.exemplo`, **fora do
-crontab**. Nao foi instalado porque nenhuma coleta real funcionou ainda, e
-agendar coleta que nunca funcionou so produz uma falha silenciosa por dia.
+Instalado apenas depois de a coleta manual funcionar: **tres execucoes com
+sucesso** (`ovh_sync_runs` ids 2, 3 e 4) antes do agendamento. Agendar coleta que
+nunca funcionou so produz uma falha silenciosa por dia.
 
-```bash
-# conferir que uma execucao manual deu certo:
-/opt/finops/ovh-collector/run-ovh-etl.sh manual
-docker exec -i finops-postgres psql -U finops_user -d finops \
-  -c "SELECT id, status, cost_rows FROM ovh_sync_runs ORDER BY id DESC LIMIT 1;"
-
-# so entao instalar, com backup:
-crontab -l > /opt/finops/backups/crontab-$(date +%F-%H%M).bak
-( crontab -l; grep -v '^#' /opt/finops/ovh-collector/cron-ovh.exemplo ) | crontab -
-
-# rollback:
-crontab /opt/finops/backups/crontab-<data>.bak
+```cron
+0 9 * * * cd /opt/finops/ovh-collector && ./run-ovh-etl.sh cron >> /opt/finops/ovh-collector/logs/cron.log 2>&1
 ```
 
-Horario proposto: **09:00 UTC** (06:00 em Sao Paulo), uma hora depois do ETL AWS.
-Os dois usam o mesmo PostgreSQL numa instancia de 3,8 GiB que ja roda Metabase --
-sobrepor as cargas cria contencao sem necessidade.
+**09:00 UTC** (06:00 em Sao Paulo), uma hora depois do ETL AWS das 08:00. Os dois
+usam o mesmo PostgreSQL numa instancia de 3,8 GiB que ja roda Metabase --
+sobrepor as cargas cria contencao sem necessidade. Os dois crons sao
+independentes: se o collector OVH quebrar, a carga AWS nao percebe.
+
+### O diretorio de log precisa existir ANTES
+
+```bash
+mkdir -p /opt/finops/ovh-collector/logs && chmod 700 /opt/finops/ovh-collector/logs
+```
+
+Nao e detalhe de arrumacao. Redirecionamento para diretorio inexistente **falha
+no shell do cron, e o comando nao roda** -- uma falha diaria silenciosa, sem log
+nenhum que a explique, porque o log e justamente o que nao pode ser aberto.
+
+### Duas variaveis de ambiente da aplicacao
+
+Instalar o cron no host **nao** informa a aplicacao. O portal roda em container
+sem acesso ao crontab, entao o estado do agendamento e DECLARADO:
+
+```env
+OVH_CRON_INSTALADO=true
+OVH_HORARIO_ESPERADO=09:00
+```
+
+Sem isso, o bloco "OVH Collector" do Diagnostico afirma que o cron nao existe --
+o oposto da verdade, na tela cuja funcao e dizer a verdade sobre o pipeline. E a
+mesma armadilha de `ETL_HORARIO_ESPERADO`, e pelo mesmo motivo: os dois passos
+andam juntos.
+
+### Como conferir que o caminho do cron funciona, sem esperar 09:00
+
+Rodar o wrapper a mao **nao prova** que o cron vai funcionar: o cron usa `sh`, um
+`PATH` reduzido e nenhuma variavel do seu login. Para testar o ambiente de
+verdade:
+
+```bash
+env -i SHELL=/bin/sh PATH=/usr/bin:/bin HOME=/home/ubuntu LOGNAME=ubuntu \
+  /bin/sh -c 'cd /opt/finops/ovh-collector && ./run-ovh-etl.sh cron \
+    >> /opt/finops/ovh-collector/logs/cron.log 2>&1'
+echo "exit=$?"
+```
+
+Depois confirme que a execucao entrou com a origem certa:
+
+```sql
+SELECT id, status, source, cost_rows, invoice_rows
+  FROM ovh_sync_runs ORDER BY id DESC LIMIT 1;
+```
+
+`source` tem de ser `cron`. Se vier `manual`, o argumento nao chegou ao wrapper.
+
+### ROLLBACK
+
+O backup do crontab **anterior** a instalacao esta em
+`/opt/finops/backups/crontab.before-ovh.2026-08-20-1530.txt` (modo 600).
+
+**Nivel 1 -- desativar so o cron OVH, preservando o AWS:**
+
+```bash
+crontab -l > /tmp/crontab.atual
+crontab -l | grep -v 'run-ovh-etl.sh' | crontab -
+crontab -l    # conferir que a linha das 08:00 do AWS continua la
+```
+
+**Nivel 2 -- restaurar o crontab inteiro de antes da instalacao:**
+
+```bash
+crontab /opt/finops/backups/crontab.before-ovh.2026-08-20-1530.txt
+crontab -l
+```
+
+Este arquivo contem **apenas** a linha do ETL AWS, que era todo o crontab antes
+desta mudanca. Restaurar remove o cron OVH e devolve o AWS ao que era.
+
+**Nivel 3 -- alinhar a aplicacao:** depois de qualquer um dos dois, ponha
+`OVH_CRON_INSTALADO=false` no `.env` da aplicacao e reinicie o container do
+portal, senao o Diagnostico passa a afirmar que existe um cron que voce acabou de
+remover.
+
+**O que o rollback NAO desfaz:** as linhas que a coleta ja gravou em
+`ovh_monthly_costs` e nas tabelas de fatura. Remover o cron para a coleta futura;
+nao apaga o passado. Para isso, ver o rollback da migracao 005 --
+`005-ovh-collector-rollback.sql` -- e leia o aviso dele antes: `usage_current` e
+fotografia de um mes em andamento e nao volta rodando o collector de novo.
+
+### Uma consequencia da janela de 12 meses
+
+O padrao `OVH_MESES_FATURA=12` faz cada execucao diaria recoletar os ultimos 12
+meses -- na rodada de 20/08/2026, 17 faturas e 266 linhas. As linhas mais antigas
+que a janela **permanecem**: o collector so faz `INSERT ... ON CONFLICT DO
+UPDATE`, nunca `DELETE`. Comprovado na propria instalacao: depois de uma rodada
+de 12 meses, as 512 linhas e o total de US$ 30.917,39 vindos da carga inicial de
+24 meses seguiram intactos, com 266 atualizadas e 246 sem toque.
 
 ---
 
@@ -311,12 +392,8 @@ legitima.
    por dia; OVH so tem mes. Enquanto isso nao for resolvido, a separacao atual e
    a resposta: cada tela le o que sabe ler, e diz qual recorte esta mostrando.
 
-4. **Instalar o cron OVH.** Preparado em `cron-ovh.exemplo`, nao instalado. O
-   bloco de Diagnostico declara esse estado explicitamente -- e declara, nao
-   mede: o portal roda em container sem acesso ao crontab do host, mesma
-   limitacao da agenda do ETL AWS.
-
-O item 5 da lista anterior -- estender o Diagnostico -- foi concluido.
+Os itens de instalar o cron e estender o Diagnostico foram concluidos -- ver
+secao 6 e a secao 5.2 do README.
 
 ---
 
