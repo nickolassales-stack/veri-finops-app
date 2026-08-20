@@ -193,6 +193,20 @@ Os `.env` conhecidos pelo git devem ser exatamente dois, os dois `.example`.
 
 Trate como vazado, mesmo que o arquivo não esteja versionado: rotacione. Um
 segredo que apareceu em log não volta a ser segredo por ter sido apagado do log.
+
+**Feito em 20/08/2026 para `finops_app`**, cujo valor apareceu num transcript.
+Rotação confirmada pelos dois lados: a senha nova autentica pelo caminho do
+portal e a antiga passou a ser **rejeitada**. O portal foi recriado a partir da
+**mesma imagem** (`sha256:cc51b937…` antes e depois), então a rotação não trocou
+nenhum binário. Nenhuma linha de custo mudou: AWS segue 1539 · 1559,361036 · 4
+contas, OVH segue 512 · 30.917,39.
+
+Procedimento, as quatro armadilhas do caminho e o rollback:
+[RUNBOOK-app.md](RUNBOOK-app.md) seção 12. A que mais engana: `pg_hba` tem
+`host all all 127.0.0.1/32 trust`, então testar a senha de dentro do container
+**passa com senha errada** — a verificação tem de vir de um container na rede do
+compose, e o controle negativo é obrigatório.
+
 Para o `finops_user` a rotação tem **quatro consumidores** — ver a seção de
 limitações do [README](../README.md).
 

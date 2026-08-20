@@ -566,3 +566,229 @@ docker exec -i finops-postgres psql -U finops_user -d finops -X -v ON_ERROR_STOP
 Depois do passo 3 a tela `/dashboard/diagnostico` continua abrindo: informa que
 o monitoramento não está instalado e não quebra nenhuma outra tela. O ETL também
 segue carregando — ele apenas registra um aviso por execução.
+
+---
+
+## 12. Rotação da senha do banco
+
+Feita em 20/08/2026 para o role `finops_app`, depois que o valor apareceu num
+transcript. **Senha que apareceu em log não volta a ser senha por ter sido
+apagada do log** — trate como vazada e rotacione.
+
+Esta seção existe porque quatro coisas no caminho não são o que se espera, e
+cada uma delas produz uma falha silenciosa ou uma falsa confirmação.
+
+### 12.1 Quem usa `finops_app` — e quem não usa
+
+| Role | Consumidores | Rotacionar exige |
+|---|---|---|
+| `finops_app` | **1** — só o portal | trocar `APP_PG_PASSWORD` e recriar o container |
+| `finops_user` | **4** — ETL AWS, collector OVH, Metabase, acesso manual | ver "Riscos conhecidos" no [README](../README.md); muito mais caro |
+| `metabase_user` | Metabase | fora do escopo |
+
+Confirme antes de mexer, em vez de confiar na tabela — é uma consulta:
+
+```bash
+docker exec finops-postgres psql -U finops_user -d finops -c \
+  "SELECT usename, client_addr, count(*) FROM pg_stat_activity
+    WHERE datname='finops' GROUP BY usename, client_addr ORDER BY usename;"
+
+docker inspect finops-portal \
+  --format '{{range $k, $v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}'
+```
+
+O `client_addr` das conexões `finops_app` tem de bater com o IP do portal. Se
+aparecer outro endereço, existe um consumidor que ninguém documentou.
+
+### 12.2 As chaves NÃO se chamam `PG_PASSWORD` nem `DATABASE_URL`
+
+Em `/opt/finops/.env` os nomes são **`APP_PG_USER`** e **`APP_PG_PASSWORD`**. O
+compose os traduz para `PG_*` dentro do container:
+
+```yaml
+PG_USER:     ${APP_PG_USER:?defina APP_PG_USER no .env}
+PG_PASSWORD: ${APP_PG_PASSWORD:?defina APP_PG_PASSWORD no .env}
+```
+
+Não existe `DATABASE_URL` neste projeto — a conexão é montada a partir de `PG_*`
+discretos. Um script de rotação que procure `PG_PASSWORD=` ou `DATABASE_URL=`
+**no `.env`** não encontra nada. Se ele não tiver guarda, escreve zero linhas e
+termina com sucesso: a senha muda no banco, o `.env` fica velho, e o estrago só
+aparece no próximo `up`. Exija que o script **falhe** quando o número de linhas
+trocadas não for exatamente 1.
+
+### 12.3 A verificação óbvia é um falso positivo
+
+O `pg_hba.conf` deste banco tem:
+
+```
+local   all   all                     trust
+host    all   all   127.0.0.1/32      trust
+host    all   all   all               scram-sha-256
+```
+
+Testar a senha com `docker exec finops-postgres psql -h 127.0.0.1 -U finops_app`
+**autentica sempre** — com senha certa, errada ou vazia. A regra `trust` casa
+antes. Um teste que passa com senha errada não está medindo senha nenhuma.
+
+Teste pelo mesmo caminho do portal: um container efêmero na rede do compose, que
+cai na regra `scram-sha-256`.
+
+```bash
+# senha correta -> devolve 1
+docker run --rm --network finops_default -e PGPASSWORD="$PW" postgres:16 \
+  psql -h postgres -U finops_app -d finops -Atc 'select 1'
+
+# controle negativo -- OBRIGATÓRIO: com senha errada tem de FALHAR
+docker run --rm --network finops_default -e PGPASSWORD='errada' postgres:16 \
+  psql -h postgres -U finops_app -d finops -Atc 'select 1'
+```
+
+Rode **os dois** antes de mudar qualquer coisa. O controle negativo é o que prova
+que o teste mede o que você pensa que ele mede.
+
+### 12.4 Procedimento
+
+Backup primeiro. `/opt/finops/.env` é `ubuntu:ubuntu` modo 600 — não precisa de
+`sudo` para escrever, e é melhor que não precise:
+
+```bash
+TS=$(date +%F-%H%M)
+cp -a /opt/finops/.env /opt/backups/veri-finops/env.before-rotate-finops-app.$TS.bak
+```
+
+Um `pg_dump` de `app_users`/`app_sessions` é opcional: rotação de senha **não
+toca em linha nenhuma**, e as sessões do portal são de aplicação, não de banco —
+ninguém é deslogado. Se fizer o dump, **`chmod 600` nele**: carrega hashes de
+senha e tokens de sessão, e `pg_dump` cria o arquivo com o umask do shell, que
+neste host produz 664.
+
+A senha vive só numa variável de shell, nunca em `echo`. Alfabeto alfanumérico
+elimina de uma vez o `+`/`/`/`=` do base64, que exigiria percent-encoding se
+algum dia a senha entrar numa URL de conexão:
+
+```bash
+NEW_PW="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-40)"
+```
+
+> `| head -c 40` **quebra sob `set -o pipefail`**: `head` sai antes do `tr`, que
+> morre de SIGPIPE e derruba a pipeline inteira. `cut -c1-40` lê tudo e não tem
+> esse problema.
+
+Troque no banco passando a senha por **stdin**, não por argumento — `-v newpass=`
+coloca o segredo em `argv`, visível no `ps` do host:
+
+```bash
+printf "ALTER ROLE finops_app WITH PASSWORD '%s';\n" "$NEW_PW" \
+  | docker exec -i finops-postgres psql -U finops_user -d finops -v ON_ERROR_STOP=1 -q
+```
+
+Então, na ordem, com reversão automática em cada passo:
+
+1. senha nova autentica (12.3) — se não, `ALTER ROLE` de volta e pare;
+2. senha antiga **rejeitada** — confirma que a rotação foi efetiva;
+3. reescreva `APP_PG_PASSWORD` no `.env`, exigindo exatamente 1 linha trocada;
+4. confirme que a contagem de chaves não mudou (13 hoje);
+5. **releia o valor do `.env` e autentique com ele** — é a única prova que mede o
+   que o container vai de fato fazer;
+6. recrie o container.
+
+### 12.5 Recriar sem rebuild
+
+`finops-app.sh up` chama `cmd_build` **sempre**. Numa troca de variável de
+ambiente o código não mudou, e rebuildar acrescenta uma segunda variável ao
+deploy: uma imagem nova a partir da mesma fonte. Recrie a partir da imagem que já
+está no ar:
+
+```bash
+PROJ="$(docker inspect finops-postgres \
+  --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+
+cd /opt/finops && docker compose -p "$PROJ" \
+  -f /opt/finops/docker-compose.yml \
+  -f /opt/veri-finops/infra/docker-compose.veri-finops.yml \
+  up -d --no-deps finops-app
+```
+
+O `-p` lido do container do banco e o `--no-deps` são o que impede de recriar
+Postgres e Metabase — os mesmos cuidados que `finops-app.sh` toma. Confirme
+depois que **o ID da imagem não mudou**, o que prova que só o container foi
+trocado:
+
+```bash
+docker inspect finops-portal --format '{{.Image}}'   # igual ao de antes
+```
+
+### 12.6 A janela é inevitável — e ela aparece no log
+
+PostgreSQL não aceita duas senhas por role. Entre o `ALTER ROLE` e a recriação do
+container existe um intervalo em que o portal **não consegue abrir conexão nova**.
+As conexões já autenticadas continuam servindo — o Postgres não derruba sessão
+aberta por troca de senha — então não houve indisponibilidade, mas houve falha
+registrada.
+
+Na rotação de 20/08/2026 a janela foi de ~67 s e o log do Postgres mostrou 5
+`password authentication failed`, todas contabilizadas:
+
+| Origem | Quantas |
+|---|---|
+| Controle negativo do 12.3, de propósito | 1 |
+| Verificação de que a senha antiga caiu (passo 2) | 1 |
+| Pool do container antigo, na cadência do healthcheck | 3 |
+
+As três últimas, espaçadas de 30 s, casam exatamente com
+`Healthcheck.Interval=30s`. Com `retries=3`, alongar a janela levaria o container
+antigo a `unhealthy` — motivo para fazer `ALTER ROLE`, `.env` e recriação **num
+único script**, e não em passos manuais separados.
+
+Contabilize cada linha antes de declarar sucesso. Um `grep -c` que devolve 5 não
+diz nada; o que importa é se sobrou alguma **depois** da recriação:
+
+```bash
+docker logs finops-postgres --since 20m 2>&1 \
+  | grep -iE 'password authentication failed' | awk '$2 > "HH:MM:SS"'
+```
+
+### 12.7 Rollback
+
+O rollback aqui **não é de imagem** — a imagem nunca mudou. São dois passos, e a
+senha antiga está no backup do `.env`:
+
+```bash
+BAK=/opt/backups/veri-finops/env.before-rotate-finops-app.<TS>.bak
+
+# 1. volta a senha no banco, lendo do backup, sem imprimir
+printf "ALTER ROLE finops_app WITH PASSWORD '%s';\n" \
+  "$(sed -nE 's/^APP_PG_PASSWORD=//p' "$BAK")" \
+  | docker exec -i finops-postgres psql -U finops_user -d finops -v ON_ERROR_STOP=1 -q
+
+# 2. volta o .env e recria (12.5)
+cp -a "$BAK" /opt/finops/.env && chmod 600 /opt/finops/.env
+```
+
+Só faz sentido enquanto o backup existir. E depois de confirmar que a rotação
+está boa, esse backup passa a ser **um arquivo com a senha antiga em texto
+claro**: mantenha modo 600 e apague quando não precisar mais dele.
+
+### 12.8 Inspecionar sem repetir o vazamento
+
+O comando reflexo vaza exatamente o que se está tentando proteger:
+
+```bash
+docker exec finops-portal printenv | grep -Ei 'PG|DATABASE'   # IMPRIME A SENHA
+```
+
+Nomes com contexto, valores só com tamanho:
+
+```bash
+docker exec finops-portal printenv | sed -E 's/=.*//' | grep -iE 'PG|AUTH|OVH' | sort
+
+docker exec finops-portal printenv | grep -E '^PG_PASSWORD=' \
+  | awk -F= '{print $1, "->", length(substr($0, index($0,"=")+1)), "chars"}'
+
+sed -E 's/(APP_PG_PASSWORD=).*/\1***REDACTED***/' /opt/finops/.env
+```
+
+Nomes de usuário e de banco (`finops_app`, `finops_user`, `finops`) **não são
+segredo** e podem ser impressos — é justamente o que permite conferir a topologia
+sem tocar em valor nenhum.

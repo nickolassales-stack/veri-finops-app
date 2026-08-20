@@ -968,7 +968,9 @@ Pendente, e não é bloqueio de publicação:
 
 - [ ] fechar a porta 3000 do Metabase (seção 13) — hoje exposta em HTTP sem TLS
 - [ ] conferir se a 22 está restrita ao IP administrativo
-- [ ] rotacionar as senhas do banco (seção 13)
+- [x] `finops_app` rotacionada em 20/08/2026 — procedimento, armadilhas e
+      rollback em [RUNBOOK-app.md](docs/RUNBOOK-app.md) seção 12
+- [ ] rotacionar `finops_user`, que tem **quatro consumidores** (seção 13, item 6)
 - [ ] backup de `/opt/nginx-proxy-manager/data` e `letsencrypt` — contêm o banco
       do painel e as chaves privadas do certificado
 - [ ] `MX`/`SPF`/`DKIM` na zona, se houver e-mail em `@nexeeo.com`
@@ -1409,8 +1411,18 @@ caminho que possa divergir.
    login, mesmo com uso contínuo.
 5. **`/api/health` é a única rota sem sessão** — necessária para o HEALTHCHECK do
    container. Ela devolve só `status` e `db.ok` a quem não está autenticado.
-6. **O deploy na EC2 ainda não foi executado.** Toda a validação até aqui foi
-   local, incluindo uma simulação fiel da pilha da EC2.
+6. **A rotação de `finops_user` tem quatro consumidores.** O role é
+   **superusuário do cluster** e a senha dele aparece em quatro lugares
+   independentes: o ETL AWS (`/opt/finops/etl`), o collector OVH
+   (`/opt/finops/ovh-collector/.env`), a conexão de dados do Metabase e o acesso
+   manual via `psql`. Trocá-la exige atualizar os quatro **na mesma janela** —
+   esquecer um só aparece na próxima execução do cron, horas depois.
+
+   `finops_app` é o caso oposto e por isso foi rotacionada primeiro: tem
+   **um** consumidor, o portal. O procedimento está em
+   [RUNBOOK-app.md](docs/RUNBOOK-app.md) seção 12, com as quatro armadilhas do
+   caminho — inclusive a regra `trust` do `pg_hba` que faz a verificação óbvia
+   passar com senha errada.
 
 **Produto**
 
