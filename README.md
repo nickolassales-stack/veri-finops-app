@@ -19,6 +19,7 @@ substituir nem alterar nenhum dos dois.
 | [assets/logos/](assets/logos/) | Identidade visual VERI |
 
 - **[docs/RUNBOOK-app.md](docs/RUNBOOK-app.md)** — deploy detalhado, role do banco, riscos
+- **[docs/homologacao-multicloud.md](docs/homologacao-multicloud.md)** — homologação do deploy multi-provider (`f08a383`, 20/08/2026): checklist com atribuição por observador, o que automação não alcança e o rollback
 - **[docs/dns-nexeeo.md](docs/dns-nexeeo.md)** — domínio de produção `nexeeo.com`, DNS, TLS e o incidente do CNAME
 - **[docs/onboard-nova-conta.md](docs/onboard-nova-conta.md)** — como adicionar uma conta AWS ao pipeline, com o script [scripts/onboard-cur-account.sh](scripts/onboard-cur-account.sh)
 - **[docs/ovh-finops.md](docs/ovh-finops.md)** — OVHcloud como segundo provedor: tabelas, collector, consultas de validação e pendências para o dashboard. Como as telas separam os provedores: seção 5.2 deste README

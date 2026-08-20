@@ -193,6 +193,28 @@ sessões encerra o acesso na hora em vez de na próxima requisição.
 
 Pré-requisitos: etapas 4 e 5 concluídas.
 
+### Os quatro nomes que não são intercambiáveis
+
+Errar qualquer um destes faz o comando falhar — ou, pior, agir no lugar errado.
+Todos foram confirmados no deploy de 20/08/2026.
+
+| | Valor | Não confundir com |
+|---|---|---|
+| Repositório no servidor | `/opt/veri-finops` | `/opt/finops`, que é o diretório do **compose de produção** e do ETL |
+| `.env` que o compose lê | **`/opt/finops/.env`** (modo 600) | `/opt/veri-finops/.env`, que **não existe** — lá só há `.env.example` |
+| Serviço no compose | **`finops-app`** | o nome do container |
+| Container | **`finops-portal`** | o nome do serviço |
+
+`docker compose build finops-portal` falha: `finops-portal` é o
+`container_name`, não o serviço. Use `finops-app`, ou o script, que já sabe disso.
+
+> **O `.env` não basta.** O compose entrega ao container **apenas** as variáveis
+> listadas no bloco `environment:` de `infra/docker-compose.veri-finops.yml`.
+> Definir algo no `.env` sem declarar lá não chega na aplicação, e ela cai no
+> valor padrão do código — silenciosamente. Foi o que aconteceu com
+> `OVH_CRON_INSTALADO`: o cron estava instalado, a variável estava no `.env`, e o
+> Diagnóstico afirmava que não havia cron.
+
 ```bash
 # 1. Código no servidor
 sudo git clone <repo> /opt/veri-finops      # ou: cd /opt/veri-finops && git pull
@@ -207,9 +229,30 @@ cp /opt/veri-finops/infra/.env.example /opt/finops/.env
 chmod 600 /opt/finops/.env
 sudo vi /opt/finops/.env     # preencher APP_PG_PASSWORD e APP_BUILD_CONTEXT
 
-# 4. Subir SOMENTE o serviço novo
+# 4. Marcar tag durável ANTES de um deploy que talvez se queira desfazer
+docker tag finops-portal:local finops-portal:pre-<nome-da-mudanca>
+
+# 5. Subir SOMENTE o serviço novo
 /opt/veri-finops/scripts/finops-app.sh up
 ```
+
+> **O passo 4 não é zelo excessivo.** `:anterior` é sobrescrita a cada `build`, e
+> dois deploys seguidos apagam o alvo do primeiro. Ver a seção 7.
+
+**Se `/opt/veri-finops` não tiver `.git`.** Até 20/08/2026 o diretório era
+extração de `git archive`, sem histórico — então o `git pull` acima era
+impossível, e o `git status` de qualquer procedimento falhava ali. Resolvido
+clonando de novo e trocando os diretórios:
+
+```bash
+sudo mkdir -p /opt/veri-finops.novo && sudo chown ubuntu:ubuntu /opt/veri-finops.novo
+git clone --branch feature/veri-finops-app --single-branch <repo> /opt/veri-finops.novo
+sudo mv /opt/veri-finops /opt/veri-finops.anterior
+sudo mv /opt/veri-finops.novo /opt/veri-finops
+```
+
+`APP_BUILD_CONTEXT` aponta para `/opt/veri-finops/web`, então o caminho continua
+válido depois da troca. Guarde um `tar -czf` do diretório antigo antes.
 
 O script embute as travas: informa sempre o nome do serviço (sem ele o compose
 avalia todos e pode recriar o Metabase), descobre o nome do projeto compose lendo
@@ -244,6 +287,28 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/api/health
 Um `Up 3 weeks` no `finops-metabase` logo depois de um deploy do portal é a
 prova de que ele não foi recriado — é o item que não pode ser pulado.
 
+```bash
+# d) o código NOVO está servindo -- conferido no container, não no disco
+#    (um `git log` correto em /opt/veri-finops não prova que a imagem
+#     foi reconstruída)
+docker exec finops-portal sh -c 'grep -rl "OVH Collector" /app/.next | wc -l'
+
+# e) as variáveis declaradas chegaram ao container
+docker exec finops-portal printenv | grep -E '^(OVH_|ETL_|AWS_INVOICING)'
+```
+
+### Homologação funcional — o que automação não alcança
+
+Os itens acima são todos verificáveis por comando. **Login, navegação e filtros
+não são:** as rotas exigem sessão válida contra `app_sessions`, e sem credencial
+de aplicação a automação para no `401`. Isso não é limitação a contornar — é o
+desenho da autenticação funcionando.
+
+Então a homologação tem duas metades, e o registro **precisa dizer qual é qual**.
+O checklist com atribuição por observador fica em
+[homologacao-multicloud.md](homologacao-multicloud.md); o do deploy
+multi-provider de 20/08/2026 está preenchido lá.
+
 ### Acessar durante a validação (sem expor a porta)
 
 ```bash
@@ -276,12 +341,50 @@ Dois cenários diferentes.
 **A versão nova subiu, mas está ruim** — volte para a imagem anterior:
 
 ```bash
-scripts/finops-app.sh rollback
+scripts/finops-app.sh rollback                    # volta para :anterior
 ```
 
-Sobe `finops-portal:anterior` **sem rebuild**: o objetivo é voltar ao binário que
-funcionava, não reconstruir a partir de um código que pode ter mudado no disco.
-O `build` guarda essa tag automaticamente antes de sobrescrever a corrente.
+Sobe **sem rebuild**: o objetivo é voltar ao binário que funcionava, não
+reconstruir a partir de um código que pode ter mudado no disco.
+
+Para voltar a uma tag durável específica:
+
+```bash
+APP_IMAGE_TAG=pre-multicloud scripts/finops-app.sh rollback
+scripts/finops-app.sh health
+```
+
+`finops-portal:pre-multicloud` guarda a imagem de `ae42e22`, marcada à mão antes
+do deploy multi-provider de 20/08/2026.
+
+### Por que marcar uma tag durável, e não confiar em `:anterior`
+
+`:anterior` é reescrita a cada `build`. Isso é correto para desfazer o **último**
+deploy, mas **dois deploys seguidos apagam o alvo do primeiro**.
+
+Havia um defeito pior até 20/08/2026, encontrado no próprio deploy:
+`tag_em_uso()` lia `.Config.Image` — a **tag** pedida, `finops-portal:local` — em
+vez de `.Image`, o **ID resolvido** da imagem. Como `cmd_up` chama `cmd_build`,
+rodar `build` e depois `up` fazia a segunda passagem marcar como `:anterior` a
+imagem **recém-criada**, apagando a única versão boa conhecida. O rollback
+daquele deploy só existiu porque a tag `pre-multicloud` foi criada à mão antes.
+
+Corrigido: o script usa o ID, que não se move quando a tag é reescrita. A trava
+sobrevive, mas marcar a tag durável continua sendo a prática — ela é o que
+protege contra o segundo deploy.
+
+Para conferir que `:anterior` aponta mesmo para outra imagem antes de subir:
+
+```bash
+docker image inspect finops-portal:anterior --format '{{.Id}}'
+docker image inspect finops-portal:local    --format '{{.Id}}'   # tem de diferir
+```
+
+> **O bit de execução não vinha do git.** Os scripts estavam versionados como
+> `100644`, então um clone limpo produzia `finops-app.sh` sem `+x` e o deploy
+> falhava com `Permission denied`. Corrigido em 20/08/2026 com
+> `git update-index --chmod=+x`. Se ainda encontrar isso num clone antigo:
+> `chmod +x scripts/*.sh scripts/*.py scripts/ovh-collector/*.sh`.
 
 **Tirar o portal do ar** — o serviço é isolado, remover não toca em mais nada:
 
@@ -371,6 +474,9 @@ e não o supervisiona — apenas lê o rastro que ele deixa em `app_etl_runs`.
 | `/opt/finops/run-etl-with-status.sh` | wrapper novo: informa a origem e chama o antigo | novo |
 | `/opt/finops/register-etl-status.py` | registro manual e conserto de execução travada | novo |
 | `crontab -l` do `ubuntu` | `0 8 * * *` apontando para o wrapper novo | sim — backup em `/opt/finops/backups/` |
+| `/opt/finops/ovh-collector/` | collector OVHcloud, venv próprio | novo — pipeline **separado**, não compartilha venv nem credencial com o ETL AWS |
+| `crontab -l` do `ubuntu` | `0 9 * * *` do collector OVH | instalado 20/08/2026 — uma hora depois do AWS, de propósito |
+| `/opt/finops/ovh-collector/logs/` | log do cron OVH, modo 700 | **o diretório precisa existir**: redirecionamento para diretório inexistente falha no shell do cron e o comando não roda |
 
 O wrapper novo **não guarda credencial nenhuma**. Ele exporta `ETL_SOURCE` e
 `ETL_LOG_PATH` e dá `exec` no script antigo, que continua sendo o único lugar
