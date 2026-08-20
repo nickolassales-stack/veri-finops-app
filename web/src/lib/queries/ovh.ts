@@ -27,6 +27,24 @@ import { FONTES_OVH, type FonteOvh } from "@/lib/filtros/esquemas";
  *
  * `raw_json` nunca sai daqui. E a resposta crua da API da OVH, nao tem funcao
  * na interface, e expo-la vazaria detalhe de integracao para o navegador.
+ *
+ * ---------------------------------------------------------------------------
+ * TODA COLUNA `date` SAI COMO to_char(..., 'YYYY-MM-DD')
+ *
+ * Nao e preferencia de estilo. `lib/database/tipos-pg.ts` registra
+ * `setTypeParser(1082, valor => valor)`: no driver deste projeto, `date` chega
+ * como STRING, de proposito -- o padrao do `pg` monta `new Date(ano, mes, dia)`
+ * em horario local e, em fuso negativo, `toISOString()` devolve o dia anterior.
+ *
+ * Tipar essas colunas como `Date` compila sem reclamacao -- o parametro de
+ * `query<T>()` e uma AFIRMACAO sobre o retorno, nao uma verificacao -- e explode
+ * em producao com "toISOString is not a function". Foi o que derrubou
+ * /dashboard/diagnostico e /dashboard/billing em 20/08/2026.
+ *
+ * `timestamptz` (OID 1184) NAO passa por aquele parser e continua vindo como
+ * `Date`: por isso `started_at`/`finished_at` usam `.toISOString()` normalmente.
+ * A diferenca entre os dois casos e a origem do erro, e e sutil.
+ * ---------------------------------------------------------------------------
  */
 
 /** `false` quando a migracao 005 ainda nao rodou. */
@@ -66,13 +84,13 @@ export async function getTotaisOvhPorOrigem(): Promise<TotalPorOrigem[]> {
     currency: string;
     total: string;
     linhas: string;
-    mes_mais_recente: Date | null;
+    mes_mais_recente: string | null;
   }>(
     `SELECT source,
             currency,
-            sum(amount)        AS total,
-            count(*)           AS linhas,
-            max(billing_month) AS mes_mais_recente
+            sum(amount) AS total,
+            count(*)    AS linhas,
+            to_char(max(billing_month), 'YYYY-MM-DD') AS mes_mais_recente
        FROM ovh_monthly_costs
       GROUP BY source, currency
       ORDER BY source, currency`,
@@ -85,9 +103,7 @@ export async function getTotaisOvhPorOrigem(): Promise<TotalPorOrigem[]> {
       currency: l.currency,
       total: Number(l.total),
       linhas: Number(l.linhas),
-      mesMaisRecente: l.mes_mais_recente
-        ? l.mes_mais_recente.toISOString().slice(0, 10)
-        : null,
+      mesMaisRecente: l.mes_mais_recente,
     }));
 }
 
@@ -112,7 +128,7 @@ export type LinhaMensalOvh = {
  */
 export async function getMensalOvh(limite = 200): Promise<LinhaMensalOvh[]> {
   const linhas = await query<{
-    billing_month: Date;
+    billing_month: string;
     provider_account_id: string;
     alias: string | null;
     project_service_name: string;
@@ -120,7 +136,7 @@ export async function getMensalOvh(limite = 200): Promise<LinhaMensalOvh[]> {
     currency: string;
     amount: string;
   }>(
-    `SELECT c.billing_month,
+    `SELECT to_char(c.billing_month, 'YYYY-MM-DD') AS billing_month,
             c.provider_account_id,
             coalesce(s.alias, a.account_name) AS alias,
             c.project_service_name,
@@ -142,7 +158,7 @@ export async function getMensalOvh(limite = 200): Promise<LinhaMensalOvh[]> {
   return linhas
     .filter((l) => ehFonteConhecida(l.source))
     .map((l) => ({
-      billingMonth: l.billing_month.toISOString().slice(0, 10),
+      billingMonth: l.billing_month,
       providerAccountId: l.provider_account_id,
       alias: l.alias,
       projectServiceName: l.project_service_name,
@@ -250,15 +266,15 @@ export async function getResumoFaturasOvh(): Promise<ResumoFaturasOvh[]> {
     linhas: string;
     currency: string;
     total: string;
-    primeiro_mes: Date | null;
-    ultimo_mes: Date | null;
+    primeiro_mes: string | null;
+    ultimo_mes: string | null;
   }>(
     `SELECT count(*)                   AS faturas,
             coalesce(sum(l.linhas), 0) AS linhas,
             h.currency,
             sum(h.total_with_tax)      AS total,
-            min(h.billing_month)       AS primeiro_mes,
-            max(h.billing_month)       AS ultimo_mes
+            to_char(min(h.billing_month), 'YYYY-MM-DD') AS primeiro_mes,
+            to_char(max(h.billing_month), 'YYYY-MM-DD') AS ultimo_mes
        FROM ovh_invoice_headers h
        LEFT JOIN (SELECT bill_id, count(*) AS linhas
                     FROM ovh_invoice_lines
@@ -273,7 +289,7 @@ export async function getResumoFaturasOvh(): Promise<ResumoFaturasOvh[]> {
     linhas: Number(l.linhas),
     currency: l.currency,
     total: Number(l.total),
-    primeiroMes: l.primeiro_mes ? l.primeiro_mes.toISOString().slice(0, 10) : null,
-    ultimoMes: l.ultimo_mes ? l.ultimo_mes.toISOString().slice(0, 10) : null,
+    primeiroMes: l.primeiro_mes,
+    ultimoMes: l.ultimo_mes,
   }));
 }

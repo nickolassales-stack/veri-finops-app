@@ -1,5 +1,11 @@
 import "server-only";
 
+import {
+  decidirSituacaoOvh,
+  montarAlertasOvh,
+  type AlertaOvh,
+  type SituacaoOvh,
+} from "@/lib/diagnostico/ovh";
 import { getEnv } from "@/lib/env";
 import {
   getExecucoesOvh,
@@ -24,36 +30,15 @@ import {
  * discordar da que o exibe.
  */
 
-/** Idade a partir da qual a ultima coleta bem-sucedida e considerada velha. */
-const HORAS_PARA_DADO_VELHO = 36;
-
-export type SituacaoOvh =
-  /** Migracao 005 nao aplicada: nao ha nem tabela. */
-  | "nao_instalado"
-  /** Tabelas existem, nenhuma execucao registrada. */
-  | "nunca_executado"
-  /** Nenhuma execucao jamais terminou em success. */
-  | "nunca_teve_sucesso"
-  /** A ultima execucao falhou, mas existe sucesso anterior. */
-  | "ultima_falhou"
-  /** Ultimo sucesso mais antigo que HORAS_PARA_DADO_VELHO. */
-  | "dado_velho"
-  /** Ha execucao em andamento agora. */
-  | "em_execucao"
-  | "ok";
-
-export type AlertaOvh = {
-  chave: string;
-  tom: "info" | "atencao" | "critico";
-  titulo: string;
-  detalhe: string;
-};
+export type { AlertaOvh, SituacaoOvh };
 
 export type VisaoOvh = {
   instalado: boolean;
   situacao: SituacaoOvh;
   /** `true` quando existe pelo menos uma linha de custo. */
   temDado: boolean;
+  /** `true` quando alguma das ultimas execucoes teve `source='cron'`. */
+  teveExecucaoAutomatica: boolean;
   ultima: ExecucaoOvh | null;
   ultimoSucesso: ExecucaoOvh | null;
   historico: ExecucaoOvh[];
@@ -77,124 +62,6 @@ export type VisaoOvh = {
   agora: string;
 };
 
-function horasDesde(iso: string, agora: Date): number {
-  return (agora.getTime() - new Date(iso).getTime()) / 3_600_000;
-}
-
-function decidirSituacao(
-  ultima: ExecucaoOvh | null,
-  ultimoSucesso: ExecucaoOvh | null,
-  agora: Date,
-): SituacaoOvh {
-  if (!ultima) return "nunca_executado";
-  // Ordem importa: uma execucao em andamento nao e falha nem sucesso, e
-  // classifica-la como qualquer um dos dois faria a tela alarmar durante os dois
-  // minutos normais de uma coleta.
-  if (ultima.status === "running") return "em_execucao";
-  if (!ultimoSucesso) return "nunca_teve_sucesso";
-  if (ultima.status !== "success") return "ultima_falhou";
-  const referencia = ultimoSucesso.finishedAt ?? ultimoSucesso.startedAt;
-  if (horasDesde(referencia, agora) > HORAS_PARA_DADO_VELHO) return "dado_velho";
-  return "ok";
-}
-
-function montarAlertas(
-  situacao: SituacaoOvh,
-  ultima: ExecucaoOvh | null,
-  ultimoSucesso: ExecucaoOvh | null,
-  temDado: boolean,
-  agora: Date,
-): AlertaOvh[] {
-  const alertas: AlertaOvh[] = [];
-
-  switch (situacao) {
-    case "nao_instalado":
-      alertas.push({
-        chave: "ovh-nao-instalado",
-        tom: "info",
-        titulo: "Integração OVH não instalada",
-        detalhe:
-          "As tabelas ovh_* não existem neste banco. Rode a migração 005 " +
-          "(scripts/migrations/005-ovh-collector.sql) para habilitar a coleta.",
-      });
-      break;
-    case "nunca_executado":
-      alertas.push({
-        chave: "ovh-nunca-executado",
-        tom: "atencao",
-        titulo: "Collector OVH nunca executou",
-        detalhe:
-          "As tabelas existem e estão vazias. Nenhum registro em ovh_sync_runs: " +
-          "o collector ainda não rodou nem uma vez.",
-      });
-      break;
-    case "nunca_teve_sucesso":
-      alertas.push({
-        chave: "ovh-nunca-sucesso",
-        tom: "critico",
-        titulo: "Collector OVH nunca concluiu com sucesso",
-        detalhe:
-          `Já houve ${ultima ? "execução" : "tentativa"}, mas nenhuma terminou em ` +
-          "success. Nenhum dado OVH nesta tela foi coletado por uma execução " +
-          "completa — trate o que aparece como parcial.",
-      });
-      break;
-    case "ultima_falhou":
-      alertas.push({
-        chave: "ovh-ultima-falhou",
-        tom: "critico",
-        titulo: "A última coleta OVH falhou",
-        detalhe:
-          "O dado exibido é do último sucesso, não do agora. " +
-          (ultimoSucesso
-            ? `Última coleta bem-sucedida: ${ultimoSucesso.finishedAt ?? ultimoSucesso.startedAt}.`
-            : ""),
-      });
-      break;
-    case "dado_velho":
-      alertas.push({
-        chave: "ovh-dado-velho",
-        tom: "atencao",
-        titulo: "Dado OVH desatualizado",
-        detalhe:
-          ultimoSucesso
-            ? `A última coleta bem-sucedida foi há ${Math.floor(
-                horasDesde(ultimoSucesso.finishedAt ?? ultimoSucesso.startedAt, agora),
-              )} horas, acima do limite de ${HORAS_PARA_DADO_VELHO}h.`
-            : "Sem coleta recente.",
-      });
-      break;
-    case "em_execucao":
-      alertas.push({
-        chave: "ovh-em-execucao",
-        tom: "info",
-        titulo: "Coleta OVH em andamento",
-        detalhe:
-          "Há uma execução aberta em ovh_sync_runs. Os números podem mudar até " +
-          "ela terminar.",
-      });
-      break;
-    case "ok":
-      break;
-  }
-
-  // Independe da situacao: coleta que termina em success sem trazer linha e um
-  // caso real -- foi o que aconteceu enquanto a credencial estava invalida.
-  // "success" sem dado nao pode ser lido como "custo zero".
-  if (situacao !== "nao_instalado" && situacao !== "nunca_executado" && !temDado) {
-    alertas.push({
-      chave: "ovh-sem-linha",
-      tom: "atencao",
-      titulo: "Nenhuma linha de custo OVH",
-      detalhe:
-        "O collector já executou, mas ovh_monthly_costs está vazia. Isto não " +
-        "significa custo zero: significa que nada foi importado.",
-    });
-  }
-
-  return alertas;
-}
-
 export async function montarVisaoOvh(limiteMensal = 200): Promise<VisaoOvh> {
   // UM instante para toda a montagem, pelo mesmo motivo de montarDiagnostico():
   // duas leituras de relogio poderiam classificar a mesma execucao de dois
@@ -209,6 +76,7 @@ export async function montarVisaoOvh(limiteMensal = 200): Promise<VisaoOvh> {
   const vazio = {
     instalado: false,
     temDado: false,
+    teveExecucaoAutomatica: false,
     ultima: null,
     ultimoSucesso: null,
     historico: [],
@@ -223,21 +91,71 @@ export async function montarVisaoOvh(limiteMensal = 200): Promise<VisaoOvh> {
     return {
       ...vazio,
       situacao: "nao_instalado",
-      alertas: montarAlertas("nao_instalado", null, null, false, agora),
+      alertas: montarAlertasOvh({
+        situacao: "nao_instalado",
+        ultima: null,
+        ultimoSucesso: null,
+        temDado: false,
+        teveExecucaoAutomatica: false,
+        cronInstalado: agendamento.cronInstalado,
+        agora,
+      }),
     };
   }
 
-  const [historico, ultimoSucesso, totaisPorOrigem, faturas, mensal] = await Promise.all([
-    getExecucoesOvh(10),
-    getUltimoSucessoOvh(),
-    getTotaisOvhPorOrigem(),
-    getResumoFaturasOvh(),
-    getMensalOvh(limiteMensal),
-  ]);
+  // A leitura inteira num try: se qualquer uma das cinco consultas falhar, esta
+  // funcao devolve ESTADO em vez de propagar excecao.
+  //
+  // Por que isto existe: `montarVisaoOvh` e chamada por Faturamento e por
+  // Diagnostico, as duas em Server Components. Excecao ali derruba a pagina
+  // INTEIRA com "A server error occurred" -- foi o que aconteceu em 20/08/2026,
+  // quando uma coluna `date` tipada como `Date` levou as duas telas embora.
+  // A secao OVH nao vale o diagnostico do ETL AWS.
+  //
+  // Nao mascara o defeito: `situacao` fica `erro_de_leitura`, um alerta critico
+  // aparece na tela e o motivo real vai para o log do servidor.
+  let historico: ExecucaoOvh[];
+  let ultimoSucesso: ExecucaoOvh | null;
+  let totaisPorOrigem: TotalPorOrigem[];
+  let faturas: ResumoFaturasOvh[];
+  let mensal: LinhaMensalOvh[];
+
+  try {
+    [historico, ultimoSucesso, totaisPorOrigem, faturas, mensal] = await Promise.all([
+      getExecucoesOvh(10),
+      getUltimoSucessoOvh(),
+      getTotaisOvhPorOrigem(),
+      getResumoFaturasOvh(),
+      getMensalOvh(limiteMensal),
+    ]);
+  } catch (err) {
+    // Log do SERVIDOR, com a mensagem tecnica. Nada disso vai para o navegador:
+    // a tela recebe o texto generico do alerta.
+    console.error("[ovh] falha ao montar a visao OVH", {
+      mensagem: err instanceof Error ? err.message : String(err),
+    });
+    return {
+      ...vazio,
+      instalado: true,
+      situacao: "erro_de_leitura",
+      alertas: montarAlertasOvh({
+        situacao: "erro_de_leitura",
+        ultima: null,
+        ultimoSucesso: null,
+        temDado: false,
+        teveExecucaoAutomatica: false,
+        cronInstalado: agendamento.cronInstalado,
+        agora,
+      }),
+    };
+  }
 
   const ultima = historico[0] ?? null;
   const temDado = totaisPorOrigem.length > 0;
-  const situacao = decidirSituacao(ultima, ultimoSucesso, agora);
+  // O historico traz as 10 ultimas; se `cron` nao aparecer em nenhuma delas, a
+  // coleta automatica ainda nao rodou -- ou parou de rodar ha dez execucoes.
+  const teveExecucaoAutomatica = historico.some((e) => e.source === "cron");
+  const situacao = decidirSituacaoOvh(ultima, ultimoSucesso, agora);
 
   return {
     instalado: true,
@@ -249,7 +167,16 @@ export async function montarVisaoOvh(limiteMensal = 200): Promise<VisaoOvh> {
     totaisPorOrigem,
     faturas,
     mensal,
-    alertas: montarAlertas(situacao, ultima, ultimoSucesso, temDado, agora),
+    teveExecucaoAutomatica,
+    alertas: montarAlertasOvh({
+      situacao,
+      ultima,
+      ultimoSucesso,
+      temDado,
+      teveExecucaoAutomatica,
+      cronInstalado: agendamento.cronInstalado,
+      agora,
+    }),
     ...agendamento,
     agora: agora.toISOString(),
   };

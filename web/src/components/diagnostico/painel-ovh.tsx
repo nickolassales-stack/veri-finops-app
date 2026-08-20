@@ -31,7 +31,10 @@ export function PainelOvh({ ovh, tz }: { ovh: VisaoOvh; tz: string }) {
           </Aviso>
         ))}
 
-        {ovh.instalado && (
+        {/* `erro_de_leitura` some com o bloco de metricas: elas viriam todas
+            "—", e uma grade de travessoes ao lado de um alerta vermelho sugere
+            que a coleta zerou, quando o que falhou foi a leitura. */}
+        {ovh.instalado && ovh.situacao !== "erro_de_leitura" && (
           <>
             <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Item rotulo="Último status" valor={ovh.ultima?.status ?? "nunca executou"} />
@@ -157,7 +160,16 @@ export function PainelOvh({ ovh, tz }: { ovh: VisaoOvh; tz: string }) {
             <>
               <span className="font-medium">cron instalado</span>, diariamente às{" "}
               <span className="veri-numero">{ovh.horarioEsperado}</span> (
-              {ovh.fusoDoAgendador}).
+              {ovh.fusoDoAgendador}).{" "}
+              {ovh.situacao !== "erro_de_leitura" &&
+                (ovh.teveExecucaoAutomatica ? (
+                  <>Já houve execução automática registrada.</>
+                ) : (
+                  <>
+                    <strong>Nenhuma execução automática registrada ainda</strong> — as
+                    coletas até agora foram manuais.
+                  </>
+                ))}
             </>
           ) : (
             <>
