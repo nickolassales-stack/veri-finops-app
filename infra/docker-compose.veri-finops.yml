@@ -108,6 +108,20 @@ services:
       ETL_EXECUCAO_ORFA_MINUTOS: ${ETL_EXECUCAO_ORFA_MINUTOS:-120}
       DIAGNOSTICO_DIAS_SEM_ATUALIZACAO: ${DIAGNOSTICO_DIAS_SEM_ATUALIZACAO:-3}
 
+      # Collector OVH: mesma natureza das tres linhas acima -- DECLARADO, nao
+      # medido. O portal roda em container sem acesso ao crontab do host.
+      #
+      # Precisa estar AQUI, e nao apenas no `.env`: o compose so repassa ao
+      # container as variaveis listadas neste bloco. Definir no `.env` sem
+      # declarar aqui nao chega na aplicacao, e o Diagnostico cai no padrao
+      # `false` -- afirmando que nao existe cron, justamente na tela cuja funcao
+      # e dizer a verdade sobre o pipeline.
+      #
+      # O padrao e `false` porque instalacao nova nao tem cron. Na EC2 de
+      # producao o cron existe desde 20/08/2026 (`0 9 * * *` UTC).
+      OVH_CRON_INSTALADO: ${OVH_CRON_INSTALADO:-false}
+      OVH_HORARIO_ESPERADO: ${OVH_HORARIO_ESPERADO:-09:00}
+
       # Faturamento. MANTENHA false: nao ha integracao implementada, o portal
       # nao tem credencial AWS, e nenhuma API da AWS diz se uma fatura foi paga.
       # Ver docs/AWS-INVOICING.md.
