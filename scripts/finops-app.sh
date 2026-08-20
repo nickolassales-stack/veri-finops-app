@@ -75,10 +75,18 @@ dc() {
       -f "$COMPOSE_ATUAL" -f "$COMPOSE_APP" "$@" )
 }
 
-# Tag da imagem que esta rodando agora -- guardada antes de qualquer build para
+# ID da imagem que esta rodando agora -- guardado antes de qualquer build para
 # que o rollback tenha para onde voltar.
+#
+# `.Image` (o ID resolvido, sha256:...) e NAO `.Config.Image` (a tag pedida).
+# A diferenca decide se o rollback existe: `.Config.Image` devolve
+# "finops-portal:local", e essa tag passa a apontar para a imagem NOVA no
+# primeiro build. Rodar `build` e depois `up` -- que chama `build` de novo --
+# faria a segunda passagem marcar como `anterior` a propria imagem recem-criada,
+# apagando a unica versao boa conhecida. Com o ID, `anterior` fica preso ao
+# binario que estava no ar, independente de quantas vezes a tag seja reescrita.
 tag_em_uso() {
-  docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || echo ""
+  docker inspect --format '{{.Image}}' "$CONTAINER" 2>/dev/null || echo ""
 }
 
 cmd_build() {

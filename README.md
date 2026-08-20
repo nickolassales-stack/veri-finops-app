@@ -1056,6 +1056,21 @@ unset APP_PG_PASSWORD
 /opt/veri-finops/scripts/finops-app.sh up
 ```
 
+> **Onde fica o `.env`.** Ao lado do `docker-compose.yml` usado no deploy —
+> `/opt/finops/.env`, com modo `600`. **Não** em `/opt/veri-finops/`: lá existe
+> apenas o `.env.example`. E o compose só entrega ao container as variáveis
+> listadas no bloco `environment:` de
+> [infra/docker-compose.veri-finops.yml](infra/docker-compose.veri-finops.yml) —
+> definir algo no `.env` sem declarar lá não chega na aplicação.
+
+**Deploy multi-provider — 20/08/2026.** `ae42e22` → `4df2c8b`. Trouxe a separação
+por provider, a seção OVHcloud em Faturamento e o bloco OVH no Diagnóstico. O
+diretório passou a ser um clone git de verdade (antes era extração de
+`git archive`, sem `.git`), então daqui em diante `git pull` funciona como este
+procedimento descreve. Backups em `/opt/backups/veri-finops/`: `.env`, os dois
+composes, o tar do código anterior e um `pg_dump` das 8 tabelas de app/OVH — sem
+nenhuma tabela AWS.
+
 > **A ordem do passo 5 não é negociável.** As consultas executivas referenciam
 > `billing_period` e `billing_month`. Subir o portal antes da migração faz toda
 > tela de custo falhar com `column "billing_month" does not exist`. O inverso é
@@ -1194,6 +1209,35 @@ Metabase, volumes e dados permanecem intactos.
 
 Se `finops-portal:anterior` não existir (primeiro deploy), o script recusa e
 lista as imagens disponíveis em vez de fazer algo imprevisível.
+
+### Marque uma tag durável antes de um deploy que você talvez queira desfazer
+
+`anterior` é sobrescrita a cada `build`. Isso é o comportamento correto para o
+caso comum — desfazer o último deploy —, mas **dois deploys seguidos apagam o
+alvo do primeiro**. Antes de uma mudança grande, fixe um nome que ninguém
+reescreve:
+
+```bash
+docker tag finops-portal:local finops-portal:pre-<nome-da-mudanca>
+# desfazer, depois:
+APP_IMAGE_TAG=pre-<nome-da-mudanca> scripts/finops-app.sh rollback
+```
+
+Foi assim no deploy multi-provider de 20/08/2026: `finops-portal:pre-multicloud`
+guarda a imagem de `ae42e22`.
+
+> Até 20/08/2026 havia um defeito aqui: `tag_em_uso()` lia `.Config.Image` — a
+> **tag** pedida, `finops-portal:local` — em vez de `.Image`, o ID resolvido.
+> Como `cmd_up` chama `cmd_build`, rodar `build` e depois `up` marcava como
+> `anterior` a imagem recém-criada, apagando a única versão boa conhecida.
+> Corrigido; o rollback agora se prende ao ID do binário que estava no ar.
+
+### O bit de execução não vinha do git
+
+Os scripts estavam versionados como `100644`. Todo deploy precisava de um
+`chmod +x` manual, e esquecê-lo fazia `finops-app.sh` falhar com
+`Permission denied` logo depois de um clone limpo. Corrigido em 20/08/2026 com
+`git update-index --chmod=+x`; clones novos já vêm executáveis.
 
 ### Desfazer as migrações
 
