@@ -269,6 +269,30 @@ docker compose -p "$(docker inspect finops-postgres \
   up -d --no-deps --build finops-app
 ```
 
+### `VERSAO-IMPLANTADA.txt` — registro operacional, nunca versionado
+
+Depois de um deploy, `/opt/veri-finops/VERSAO-IMPLANTADA.txt` registra o que está
+no ar naquela máquina:
+
+```
+COMMIT: 02f9250
+IMPLANTADO_EM: 2026-08-21T14:51:48Z
+ROLLBACK: finops-portal:before-dashboard-ovh
+BRANCH: feature/veri-finops-app
+```
+
+Ele fica **untracked de propósito**, e está no `.gitignore` desde 21/08/2026. O
+motivo não é higiene: é um fato sobre a *máquina*, não sobre o repositório.
+Versioná-lo faria o registro de uma máquina sobrescrever o da outra a cada `pull`,
+e o arquivo passaria a dizer qual commit está *no repositório* em vez de qual está
+*no ar* — exatamente a pergunta que ele existe para responder. Pior: um `pull`
+sobrescreveria o registro no meio de um incidente, apagando a linha `ROLLBACK`
+justamente quando ela é necessária.
+
+Como ele não é versionado, `git status` na EC2 sempre o mostra como untracked.
+Isso é o esperado, não sujeira — e antes de 21/08/2026 ele aparecia sem estar
+ignorado, o que convidava a um `git add -A` distraído.
+
 ### Validação obrigatória pós-deploy
 
 ```bash
@@ -356,6 +380,31 @@ scripts/finops-app.sh health
 
 `finops-portal:pre-multicloud` guarda a imagem de `ae42e22`, marcada à mão antes
 do deploy multi-provider de 20/08/2026.
+
+> **Até 21/08/2026 este comando não funcionava, e falhava calado.** `cmd_rollback`
+> fazia `export APP_IMAGE_TAG=anterior` incondicionalmente, descartando o valor
+> informado: `APP_IMAGE_TAG=pre-multicloud … rollback` voltava para `:anterior` e
+> anunciava sucesso. Quem quisesse desfazer duas versões desfazia uma — sem
+> nenhum aviso, e com o health passando. Corrigido: a variável agora vence, e
+> sem ela o padrão continua sendo `anterior`.
+
+Três comportamentos, agora garantidos:
+
+| Invocação | Tag usada |
+|---|---|
+| `scripts/finops-app.sh rollback` | `:anterior` |
+| `APP_IMAGE_TAG=before-dashboard-ovh scripts/finops-app.sh rollback` | `:before-dashboard-ovh` |
+| `APP_IMAGE_TAG=local scripts/finops-app.sh rollback` | **recusado** |
+
+`local` é recusada de propósito. Ela aponta para a imagem que o `build` acabou de
+criar, então "voltar" para ela sobe de novo o binário que se quer abandonar — e o
+container sobe, o healthcheck passa e o log diz que o rollback deu certo. Não é
+hipótese remota: `APP_IMAGE_TAG=local` está no `infra/.env.example` e, portanto,
+no `.env` de produção; basta alguém exportar essa linha no próprio shell.
+
+O script imprime **de onde para onde**, com os IDs resolvidos das duas imagens, e
+avisa quando a tag pedida já é a imagem em uso — caso em que o rollback não muda
+binário nenhum.
 
 ### Por que marcar uma tag durável, e não confiar em `:anterior`
 

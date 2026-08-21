@@ -10,6 +10,12 @@
 #   ./scripts/finops-app.sh rollback   volta para a imagem anterior
 #   ./scripts/finops-app.sh down       para o portal (nao toca no resto)
 #
+# ROLLBACK PARA UMA TAG ESPECIFICA: sem a variavel usa `anterior`; com ela, usa
+# o que voce pediu. `local` e recusada -- ela aponta para a imagem recem-criada.
+#
+#   ./scripts/finops-app.sh rollback                                 -> :anterior
+#   APP_IMAGE_TAG=pre-multicloud ./scripts/finops-app.sh rollback    -> :pre-multicloud
+#
 # POR QUE ESTE SCRIPT EXISTE: cada comando abaixo termina com o nome do servico,
 # `finops-app`. Sem esse nome, o `docker compose` avalia TODOS os servicos do
 # projeto e pode recriar o Metabase e o PostgreSQL. Esquecer isso uma vez, num
@@ -171,18 +177,64 @@ cmd_status() {
 
 cmd_rollback() {
   exigir_arquivos
-  if ! docker image inspect "$IMAGEM:anterior" >/dev/null 2>&1; then
-    vermelho "nao existe $IMAGEM:anterior -- nada para onde voltar"
+
+  # A tag pedida pelo operador VENCE; sem pedido, `anterior`.
+  #
+  # Antes esta funcao fazia `export APP_IMAGE_TAG=anterior` incondicionalmente e
+  # descartava em silencio o valor informado. `APP_IMAGE_TAG=pre-multicloud
+  # ... rollback` voltava para `anterior` e anunciava sucesso: quem quisesse
+  # desfazer duas versoes desfazia uma, sem nenhum aviso.
+  local tag="${APP_IMAGE_TAG:-anterior}"
+  local origem_da_tag
+  if [ -n "${APP_IMAGE_TAG:-}" ]; then
+    origem_da_tag="informada em APP_IMAGE_TAG"
+  else
+    origem_da_tag="padrao (APP_IMAGE_TAG nao informado)"
+  fi
+
+  # `local` NUNCA e alvo de rollback. Ela e a tag que o build ACABOU de
+  # sobrescrever com a imagem nova, entao voltar para ela nao desfaz nada -- e o
+  # container sobe, o healthcheck passa e o log diz "rollback concluido".
+  #
+  # Nao e hipotese remota: `APP_IMAGE_TAG=local` esta no infra/.env.example e,
+  # portanto, no .env de producao. Quem exportar essa variavel no proprio shell
+  # (ou copiar a linha do .env para testar algo) cai exatamente aqui.
+  if [ "$tag" = "local" ]; then
+    vermelho "APP_IMAGE_TAG=local nao e alvo de rollback"
+    echo "A tag 'local' aponta para a imagem RECEM-CONSTRUIDA -- voltar para ela"
+    echo "sobe de novo o binario que se quer abandonar, e o health passa."
+    echo "Use o padrao (sem a variavel) ou uma tag de marco:"
+    docker images "$IMAGEM" --format '  {{.Repository}}:{{.Tag}}  ({{.CreatedSince}})' | grep -v ":local " || true
+    exit 1
+  fi
+
+  if ! docker image inspect "$IMAGEM:$tag" >/dev/null 2>&1; then
+    vermelho "nao existe $IMAGEM:$tag -- nada para onde voltar"
     echo "Imagens disponiveis:"
     docker images "$IMAGEM" --format '  {{.Repository}}:{{.Tag}}  ({{.CreatedSince}})'
     exit 1
   fi
 
-  amarelo "voltando para $IMAGEM:anterior"
+  # DE onde PARA onde, com os ids resolvidos. So o destino nao basta: se a tag
+  # pedida apontar para a imagem que ja esta no ar, o rollback nao muda nada, e
+  # sem os dois lados isso passa por sucesso.
+  local em_uso destino_id em_uso_id
+  em_uso="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || echo "(sem container)")"
+  em_uso_id="$(docker inspect --format '{{.Image}}' "$CONTAINER" 2>/dev/null | cut -c1-19 || echo "")"
+  destino_id="$(docker image inspect --format '{{.Id}}' "$IMAGEM:$tag" | cut -c1-19)"
+
+  amarelo "rollback: $em_uso ($em_uso_id) -> $IMAGEM:$tag ($destino_id)"
+  echo "  tag $origem_da_tag"
+  if [ -n "$em_uso_id" ] && [ "$em_uso_id" = "$destino_id" ]; then
+    amarelo "  atencao: a tag pedida JA e a imagem em uso -- este rollback nao muda o binario"
+  fi
+
   # `export` explicito, e nao prefixo `VAR=x comando`: `dc` e uma FUNCAO que
   # chama o docker num subshell, e a forma prefixada depende do modo do shell
-  # para chegar ate o processo filho.
-  export APP_IMAGE_TAG=anterior
+  # para chegar ate o processo filho. O export tambem tem de vencer o
+  # APP_IMAGE_TAG que o compose leria de $DIR_COMPOSE/.env -- e vence, porque
+  # variavel de ambiente tem precedencia sobre arquivo .env no docker compose.
+  export APP_IMAGE_TAG="$tag"
 
   # Sobe a imagem antiga SEM rebuild: o objetivo do rollback e voltar ao binario
   # que funcionava, nao reconstruir a partir de um codigo que pode ter mudado no
@@ -200,7 +252,9 @@ case "${1:-}" in
   status)   cmd_status ;;
   rollback) cmd_rollback ;;
   *)
-    sed -n '3,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # Intervalo por PADRAO, nao por numero de linha: o help ja era impresso como
+    # '3,17p' e qualquer linha acrescentada ao cabecalho o cortava no lugar errado.
+    sed -n '/^# Portal FinOps VERI/,/^# O script torna esse detalhe/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

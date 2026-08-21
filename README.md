@@ -383,7 +383,7 @@ O `.env` real vive ao lado do `docker-compose.yml` da EC2, com `chmod 600`, e
 | Variável | Padrão | Para que serve |
 |---|---|---|
 | `APP_BUILD_CONTEXT` | — **(obrigatória)** | Caminho absoluto de `web/` na EC2 |
-| `APP_IMAGE_TAG` | `local` | Tag da imagem. `anterior` é reservada ao rollback |
+| `APP_IMAGE_TAG` | `local` | Tag da imagem. `anterior` é reservada ao rollback, que também aceita a variável para escolher outra tag — e recusa `local` |
 | `PG_DB` | `finops` | Banco (o mesmo do ETL e do Metabase) |
 | `APP_PG_HOST` | `postgres` | Nome do serviço na rede interna do compose |
 | `APP_PG_USER` | — **(obrigatória)** | Role dedicado, permissão mínima. **Não** use `finops_user` |
@@ -1253,6 +1253,13 @@ APP_IMAGE_TAG=pre-<nome-da-mudanca> scripts/finops-app.sh rollback
 
 Foi assim no deploy multi-provider de 20/08/2026: `finops-portal:pre-multicloud`
 guarda a imagem de `ae42e22`.
+
+> **Este comando só passou a funcionar em 21/08/2026.** `cmd_rollback` sobrescrevia
+> `APP_IMAGE_TAG` com `anterior` antes de subir, jogando fora a tag informada: o
+> rollback voltava uma versão em vez de duas, dizia "portal saudável" e não dava
+> nenhum sinal de que havia ignorado o pedido. Agora a variável é respeitada; sem
+> ela, o padrão segue `anterior`. `APP_IMAGE_TAG=local` é **recusada** — aponta
+> para a imagem recém-construída, e voltar para ela não desfaz nada.
 
 > Até 20/08/2026 havia um defeito aqui: `tag_em_uso()` lia `.Config.Image` — a
 > **tag** pedida, `finops-portal:local` — em vez de `.Image`, o ID resolvido.

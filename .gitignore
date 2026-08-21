@@ -41,6 +41,14 @@ venv/
 # O snapshot revisado e versionado manualmente em docs/schema-snapshot.md
 scripts/out/
 
+# ---- Arquivos operacionais, proprios de cada maquina ----
+# VERSAO-IMPLANTADA.txt registra qual commit esta no ar NAQUELA maquina. E um
+# fato sobre a maquina, nao sobre o repositorio: versiona-lo faria o registro de
+# uma maquina sobrescrever o da outra a cada pull, e o arquivo passaria a dizer
+# o que esta no REPOSITORIO em vez do que esta NO AR -- exatamente a pergunta
+# que ele existe para responder.
+VERSAO-IMPLANTADA.txt
+
 # ---- Coletor OVH (POC) ----
 # `out/` ja e coberto pela regra generica acima, mas fica explicito aqui: o
 # resultado da POC e sanitizado, e ainda assim revela quanto a empresa gasta e
