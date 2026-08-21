@@ -42,14 +42,14 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
 
         <div className="rounded-2xl border border-veri-verde-claro/40 bg-veri-branco p-8 shadow-[0_1px_3px_rgba(56,78,70,0.06)]">
           <h1 className="veri-display text-2xl text-veri-verde-escuro">Portal FinOps</h1>
-          <p className="mt-1 mb-6 text-sm text-veri-verde-escuro/70">
+          <p className="mt-1 mb-6 text-sm text-texto-suave">
             Acesso restrito. Entre com suas credenciais.
           </p>
 
           <LoginForm next={next} />
         </div>
 
-        <p className="mt-6 text-center text-xs text-veri-verde-escuro/60">
+        <p className="mt-6 text-center text-xs text-texto-suave">
           Não há cadastro público. Solicite acesso ao administrador do portal.
         </p>
       </div>

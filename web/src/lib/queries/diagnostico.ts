@@ -1,6 +1,6 @@
 import "server-only";
 
-import { query } from "@/lib/db";
+import { query } from "@/lib/database";
 
 /**
  * Consultas de diagnostico -- deliberadamente agnosticas ao schema.

@@ -35,9 +35,9 @@ export function ChartTooltip({
           return (
             <li key={i} className="text-xs text-veri-verde-escuro">
               <span className="veri-numero font-medium">{formatUSD(item.value)}</span>
-              {item.name && <span className="text-veri-verde-escuro/60"> · {item.name}</span>}
+              {item.name && <span className="text-texto-suave"> · {item.name}</span>}
               {extra && (
-                <span className="ml-1 text-veri-verde-escuro/70">({extra})</span>
+                <span className="ml-1 text-texto-suave">({extra})</span>
               )}
             </li>
           );

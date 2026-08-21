@@ -1,16 +1,58 @@
+# =============================================================================
+# O que NAO entra no contexto de build.
+#
+# Duas razoes, nesta ordem de importancia:
+#
+# 1. SEGREDO. `.env`, `.env.local` e chaves nao podem sequer chegar ao daemon do
+#    Docker -- uma vez no contexto, aparecem no cache de build e em qualquer
+#    `COPY . .`, mesmo que nenhuma linha do Dockerfile os copie de proposito.
+# 2. TAMANHO. node_modules e .next somam centenas de MB que o builder
+#    reconstroi de qualquer forma.
+# =============================================================================
+
+# ---- segredos -------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.ppk
+id_rsa*
+id_ed25519*
+
+# ---- dependencias e artefatos de build ------------------------------------
 node_modules
 .next
 out
 build
+dist
+.turbo
+*.tsbuildinfo
+
+# ---- testes e relatorios ---------------------------------------------------
 coverage
+.nyc_output
+test-results
+playwright-report
+
+# ---- versionamento e ferramentas -------------------------------------------
 .git
 .gitignore
-.env
-.env.*
-!.env.example
-*.md
-!README.md
+.github
+.vscode
+.idea
 Dockerfile
 .dockerignore
+
+# ---- documentacao (nao afeta o build) --------------------------------------
+# README fica: e a unica doc que vale ter dentro da imagem para quem abrir o
+# container sem o repositorio em maos. AGENTS.md/CLAUDE.md caem no `*.md`.
+*.md
+!README.md
+
+# ---- ruido de SO e log -----------------------------------------------------
+*.log
 npm-debug.log*
 .DS_Store
+Thumbs.db
+desktop.ini

@@ -27,6 +27,20 @@ npm run dev                        # http://localhost:3000
 
 `.env.local` está no `.gitignore`. Nunca comitar credencial.
 
+### Rodar em Docker, com a imagem que vai para a EC2
+
+Para conferir o artefato antes de publicar — o `npm run dev` não prova que a
+imagem funciona:
+
+```bash
+# na raiz do repositório, com o túnel SSH ativo
+docker compose -f infra/docker-compose.dev.yml up -d --build
+curl http://127.0.0.1:3001/api/health
+docker compose -f infra/docker-compose.dev.yml down
+```
+
+Arquitetura, variáveis, deploy e rollback: **[README da raiz](../README.md)**.
+
 ## Comandos
 
 | Comando | O que faz |
@@ -103,8 +117,13 @@ ADMIN_EMAIL="nome@porveri.com.br" ADMIN_PASSWORD="..." npm run create-admin
 | `ADMIN_ROLE` | não | `ADMIN` (padrão) ou `VIEWER` |
 
 O comando é **idempotente**: rodar de novo para o mesmo e-mail redefine a senha e
-o papel, e encerra as sessões abertas daquele usuário. É também o caminho para
-trocar senha — não há tela de troca de senha nesta etapa.
+o papel, e encerra as sessões abertas daquele usuário. Serve tanto para criar o
+primeiro acesso quanto para destravar quem esqueceu a senha.
+
+O próprio usuário troca a senha em **`/conta`** (link no cabeçalho, sobre o nome).
+A senha atual é exigida mesmo com a sessão aberta — sem isso, um cookie roubado
+permitiria tomar a conta em definitivo. Ao trocar, as sessões abertas em outros
+navegadores são encerradas e a atual é preservada.
 
 ### Como testar login e logout
 
@@ -121,8 +140,9 @@ npm run dev        # ou: npm start, para exercitar o build de produção
 | `/dashboard` sem sessão | Redireciona para `/login?next=%2Fdashboard` |
 | `/dashboard` com sessão | Renderiza a visão executiva |
 | Botão **Sair** | Volta para `/login`, apaga a linha em `app_sessions` e o cookie |
+| `/conta` → trocar senha | Senha atual errada é recusada; troca válida confirma sucesso e mantém a sessão |
 | 5 senhas erradas seguidas | Bloqueio de 5 minutos para aquele e-mail + IP |
-| `/diagnostico` com perfil `VIEWER` | Redireciona para `/sem-permissao` |
+| `/dashboard/diagnostico` com perfil `VIEWER` | Redireciona para `/sem-permissao` |
 
 Conferir no banco:
 
@@ -135,11 +155,65 @@ SELECT user_id, expires_at, last_seen_at FROM app_sessions;   -- vazia após log
 
 | Perfil | Acesso |
 |---|---|
-| `ADMIN` | Tudo, incluindo `/diagnostico` (estrutura do banco e privilégios) |
+| `ADMIN` | Tudo, incluindo `/dashboard/diagnostico` (saúde do ETL, estrutura do banco e privilégios) |
 | `VIEWER` | Visão executiva e analítico |
 
 Esconder o link de navegação **não** é a proteção: a autorização é aplicada por
 `requirePapel()` dentro da rota.
+
+## Dashboard executivo (`/dashboard`)
+
+Consome **os endpoints**, nunca o banco: o navegador não tem credencial de
+PostgreSQL e não teria como obtê-la. A página é um Server Component fino que só
+resolve o fuso; o carregamento acontece no cliente, o que permite trocar filtro
+sem recarregar e dar a cada bloco seu próprio estado.
+
+### Filtros globais
+
+Valem para todos os cards e gráficos, e **a URL é a única fonte de verdade** —
+link compartilhável, botão voltar funciona, recarregar não perde nada. Só o que
+foge do padrão aparece na query string (`/dashboard` limpo = mês atual, todas as
+contas).
+
+- **Período**: 7 dias, 30 dias, mês atual, mês anterior, intervalo personalizado
+- **Contas**: todas, uma ou várias — lista vinda de `cloud_accounts`, sem nenhum
+  id fixo no código
+
+Intervalo inválido é barrado **antes** de chamar a API, com mensagem sob o campo
+e `aria-invalid`. A API valida de novo — a checagem no cliente é a primeira
+barreira, não a única.
+
+### Como o painel evita mentir com número
+
+| Situação | O que a tela faz |
+|---|---|
+| Conjunto de contas muda entre os períodos | Substitui o percentual por "variação não comparável" e explica o motivo |
+| Dia sem carga do ETL | **Interrompe a linha** (lacuna), em vez de desenhar zero |
+| Conta sem carga no período | Fica **fora** do gráfico de barras e é nomeada em texto |
+| Serviço que soma menos de um centavo | Sai do ranking e da distribuição |
+| Custo lançado em data futura | Aviso no topo; o valor não entra em nenhum número |
+| Cotação indisponível | BRL vem `—`; o USD segue exato |
+
+### Hierarquia USD × BRL
+
+USD é o valor oficial: card em destaque, corpo maior, tinta forte. BRL é
+estimativa: card comum, corpo menor, tinta secundária, prefixo `~` e a palavra
+"estimativa" no rótulo. A diferença tem de ser óbvia sem ler.
+
+### Acessibilidade
+
+HTML semântico (`main`, `header`, `section`, hierarquia de títulos); filtros em
+`fieldset`/`legend` com radios e checkboxes nativos, navegáveis por setas e
+`Esc`; foco visível dentro da paleta; nenhuma informação transmitida só por cor.
+Todo gráfico de barras tem **visão de tabela** — exigência de contraste, não
+conveniência (ver [../docs/DECISOES-dataviz.md](../docs/DECISOES-dataviz.md)).
+
+### Responsividade
+
+Desktop é prioritário; notebook, tablet e mobile verificados em 1440/1280/820/390 px
+sem rolagem horizontal. Gráficos ficam em contêiner com `overflow-hidden`, para
+que a largura obsoleta do recharts durante um redimensionamento não empurre o
+layout.
 
 ## Organização
 
@@ -153,14 +227,28 @@ src/
     (privado)/
       layout.tsx             FRONTEIRA DE AUTENTICAÇÃO: requireSessao()
       dashboard/             visão executiva
-      dashboard/analitico/   rota protegida (conteúdo na próxima etapa)
-      diagnostico/           somente ADMIN
+      dashboard/analitico/   analítico por serviço: tabela paginada no servidor
+      dashboard/analitico/custos/  analítico por custo mensal (período de cobrança)
+      dashboard/billing/     faturamento: fechamento, avisos e pagamento (billing:*)
+      dashboard/configuracoes/     área administrativa (settings:*)
+      dashboard/diagnostico/ saúde do ETL, frescor da carga e do banco
+      conta/                 dados da sessão e troca de senha
+      diagnostico/           redirecionamento para a rota acima (link antigo)
       sem-permissao/         403 de perfil insuficiente
-    api/health/route.ts      usado pelo HEALTHCHECK do container (público)
+    api/
+      health/route.ts        usado pelo HEALTHCHECK do container (público)
+      accounts/              cadastro de contas AWS
+      dashboard/             summary, accounts, services, daily,
+                             daily-by-service, analytic
+      exchange-rate/         cotação USD/BRL
+      export/                csv e xlsx do recorte atual (devolvem ARQUIVO)
+      diagnostics/           etl, accounts, data-freshness (diagnostics:view)
+      billing/               status, settings, notifications (billing:view/manage)
   components/
-    layout/                  header, nav, footer
+    layout/                  header (logo, usuário, sair), nav, footer
+    dashboard/               painel executivo, barra de filtros, cards de KPI
     charts/                  gráficos (tema e paleta validados)
-    ui/                      card, aviso, kpi
+    ui/                      card, aviso, kpi, estados, visão de tabela
   lib/
     auth/
       password.mjs           scrypt -- implementação única, usada pela app e pelo seed
@@ -168,14 +256,157 @@ src/
       dal.ts                 getSessao, requireSessao, requirePapel
       actions.ts             server actions de entrar/sair + throttle
       destino.ts             validação anti-open-redirect do parâmetro `next`
-    db.ts                    pool pg, timeouts, checagem de saúde
+      troca-senha.ts         regras de troca de senha (puro, testável)
+    api/
+      http.ts                contrato { dados, meta } / { erro }; tradução de falhas
+      rota.ts                envelope das rotas: exige sessão, padroniza resposta
+    database/
+      client.ts              pool pg, timeouts, checagem de saúde
+      sql.ts                 ConstrutorParams, escape de LIKE, lista fechada
+      tipos-pg.ts            date → string; timestamp → UTC (ver achado 7 do schema)
+    billing/
+      ciclo.ts               fechamento e vencimento (PURO): dia 31, mês seguinte
+      notificacoes.ts        avisos derivados + contrato de canal futuro (PURO)
+      pagamento.ts           vocabulário de status e fonte (PURO, servidor e cliente)
+      aws-invoicing.ts       integração desligada: assinatura final, sem chamar a AWS
+    diagnostico/
+      agenda.ts              quando o ETL deveria rodar (PURO): fuso do cron × fuso da tela
+      etl.ts                 situação e alertas do pipeline + redação de segredo (PURO)
+    tempo/
+      calendario.ts          que dia é hoje neste fuso (PURO) — base do ETL e da fatura
+    filtros/
+      periodo.ts             resolução de período (PURO, testável)
+      esquemas.ts            validação Zod de tudo que chega pela URL
+    export/
+      colunas.ts             as 9 colunas -- fonte única de CSV e XLSX
+      csv.ts                 BOM, separador, decimal, anti-injeção (PURO)
+      metadados.ts           cabeçalho de contexto do arquivo (PURO)
+      dados.ts               teto de linhas + leitura em lotes
+      gerar-csv.ts           corpo em streaming
+      gerar-xlsx.ts          planilha de duas abas
+    queries/                 SQL por domínio
+    services/                orquestra filtro + queries para os endpoints
+      parametros-analiticos  contrato compartilhado por analytic e export/*
+    dashboard/               filtros na URL (puro), cliente HTTP e hooks de dados
+    exchange-rate/           cotação USD/BRL: provedores, cache, orquestrador
     env.ts                   validação de env (lazy: o build não precisa do banco)
     format.ts                formatação pt-BR; valores em USD, sem conversão
     nav.ts                   navegação (só rotas já implementadas)
-    queries/                 SQL por domínio
 scripts/
   create-admin.mjs           criação/atualização de usuário
 ```
+
+## API de dados
+
+Dez endpoints protegidos: `/api/accounts`,
+`/api/dashboard/{summary,accounts,services,daily,daily-by-service,analytic}`,
+`/api/exchange-rate` e `/api/export/{csv,xlsx}`.
+
+Contrato, parâmetros de filtro, códigos de erro e as decisões por trás do
+período padrão estão em **[../docs/API-dados.md](../docs/API-dados.md)**.
+
+## Exportação (CSV e XLSX)
+
+Botões em `/dashboard/analitico`. O arquivo é montado **no servidor** e contém
+tudo o que o filtro seleciona — não a página visível. O navegador só recebe o
+arquivo pronto: não formata, não soma e não converte nada.
+
+**Biblioteca do XLSX: [`write-excel-file`](https://www.npmjs.com/package/write-excel-file)**
+(MIT). Escolhida sobre `exceljs` por três motivos objetivos: uma dependência
+(`fflate`) contra nove; publicação recente (4.1.1, jun/2026) contra 4.4.0 de
+dez/2024; e escopo de **escrita apenas** — não carregamos um parser de xlsx/zip
+que só serviria para ler arquivo de terceiro, superfície que um servidor de dado
+financeiro não precisa ter. O CSV é escrito à mão: são ~90 linhas, e as decisões
+que importam (BOM, separador, decimal, anti-injeção) são justamente as que uma
+biblioteca genérica erraria para o Excel pt-BR.
+
+| | CSV | XLSX |
+|---|---|---|
+| Codificação | UTF-8 **com BOM**, separador `;`, decimal com vírgula, CRLF | — |
+| Metadados | linhas `# rótulo;valor` no topo | aba **Contexto** |
+| Dados | após uma linha em branco | aba **Lançamentos**, cabeçalho congelado |
+| Memória | **streaming**, lotes de 2.000 linhas | planilha inteira (é um zip de XML) |
+
+**Por que o BOM:** sem ele o Excel do Windows abre o arquivo em ANSI e "Serviço"
+vira "Serviço". **Por que `;`:** o Excel pt-BR usa o separador de lista do
+sistema; com vírgula, a planilha inteira cai numa coluna só.
+
+**Injeção de fórmula.** `service` e `account_name` vêm do ETL. Um valor iniciado
+por `=`, `+`, `-` ou `@` seria **executado** ao abrir a planilha na máquina de
+quem recebeu o arquivo (CWE-1236) — o `$1` do Postgres protege o banco, não o
+Excel de quem abre. Campos de texto recebem prefixo `'`; números não, senão um
+crédito negativo da AWS deixaria de somar.
+
+**Teto de volume — `EXPORT_MAX_ROWS` (padrão 50.000).** Conferido *antes* de
+gerar. Acima dele a exportação é **recusada** (HTTP 413) com a contagem e o
+limite na mensagem. Nunca truncada: relatório financeiro cortado pela metade tem
+cara de completo, e é o pior desfecho possível. O CSV em streaming não depende do
+teto; quem ele protege é o XLSX, que precisa existir inteiro na memória antes de
+ser compactado — num container de 512 MiB ao lado de um Metabase que já sofreu
+OOM nesta instância.
+
+Validado abrindo o arquivo gerado **no Excel** (16.0): duas abas, 231 linhas × 9
+colunas, datas reconhecidas como data, valores como número, e a soma da coluna
+USD calculada pelo próprio Excel batendo com o total da tela.
+
+## Cotação USD/BRL
+
+**Fonte: Banco Central do Brasil.** Dois provedores, ambos oficiais e sem
+autenticação:
+
+| `EXCHANGE_RATE_PROVIDER` | Fonte | Observação |
+|---|---|---|
+| `ptax` (padrão) | PTAX venda, via OData do Olinda | traz a **hora** do boletim |
+| `sgs` | Série 1 do SGS | mesmo valor, só a **data** |
+| `nenhum` | — | desliga a estimativa; nenhuma chamada externa |
+
+### A conversão é estimativa, não valor contábil
+
+O valor oficial da AWS é **em USD** — é assim que ele é armazenado, somado e
+exibido. O BRL aparece apenas como ordem de grandeza ao lado, e **nada em BRL é
+gravado no banco**: a estimativa é calculada na leitura e morre com a resposta.
+
+A PTAX de um dia não é a taxa que a fatura aplicou. A taxa real depende da data
+de fechamento do câmbio, do spread do emissor e do IOF. Por isso toda resposta
+que traz BRL carrega junto o campo `aviso`.
+
+### Comportamento quando a fonte falha
+
+A ordem é sempre esta, e `obterCotacao()` **nunca lança** — é o que garante que
+o custo em USD continue aparecendo:
+
+| Situação | `status` | O que a tela mostra |
+|---|---|---|
+| Buscou agora | `current` | cotação normal |
+| Cache dentro do TTL | `cached`, `desatualizada: false` | cotação normal |
+| Falhou, mas há valor guardado | `cached`, **`desatualizada: true`** | valor + marca de desatualizado |
+| Falhou e não há nada | `unavailable` | **só USD**; `estimativaBRL.total` vem `null` |
+
+`null` e não zero: zero seria lido como "custo zero" — número inventado, que
+este projeto não exibe.
+
+O cache é em memória do processo, com duas camadas: dentro do TTL evita ida à
+rede; passado o TTL o valor **não é descartado**, vira reserva para o caso de a
+próxima busca falhar (até 7 dias). **Limitação:** o cache some no restart do
+container. Nada quebra — a primeira requisição busca de novo, e se o BCB estiver
+fora naquele instante, o portal segue em USD.
+
+### Configuração
+
+| Variável | Padrão | O que faz |
+|---|---|---|
+| `EXCHANGE_RATE_PROVIDER` | `ptax` | fonte, ou `nenhum` para desligar |
+| `EXCHANGE_RATE_CACHE_TTL_SECONDS` | `3600` | validade do cache |
+| `EXCHANGE_RATE_TIMEOUT_MS` | `4000` | teto de espera pela API externa |
+
+Exige **saída HTTPS do container** para `olinda.bcb.gov.br` e `api.bcb.gov.br`.
+Verificado na EC2 FinOps em 06/08/2026 (host e container respondem 200). Se a
+saída for bloqueada, use `nenhum`.
+
+> **Por que consultar um período e não "a cotação de hoje":** o boletim de
+> fechamento sai por volta das 13h. Consultar a data de hoje devolve vazio a
+> manhã inteira — e o fim de semana e feriado inteiros. O provedor PTAX consulta
+> os últimos 10 dias e pega o boletim mais recente.
 
 ## Convenções
 

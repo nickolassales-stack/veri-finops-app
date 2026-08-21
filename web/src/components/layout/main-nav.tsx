@@ -10,7 +10,8 @@ export function MainNav({ itens }: { itens: ItemNav[] }) {
 
   return (
     <nav aria-label="Navegacao principal">
-      <ul className="flex items-center gap-1">
+      {/* `flex-wrap`: com quatro secoes o menu nao cabe numa linha de celular. */}
+      <ul className="flex flex-wrap items-center gap-1">
         {itens.map((item) => {
           // /dashboard nao deve ficar ativo quando se esta em /dashboard/analitico
           const ativo =

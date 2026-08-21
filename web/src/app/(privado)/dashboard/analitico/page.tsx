@@ -1,34 +1,36 @@
-import { Aviso } from "@/components/ui/aviso";
-import { requireSessao } from "@/lib/auth/dal";
+import { Suspense } from "react";
 
-export const metadata = { title: "Analitico" };
+import { PainelAnalitico } from "@/components/dashboard/painel-analitico";
+import { CarregandoLinhas } from "@/components/ui/estado";
+import { getEnv } from "@/lib/env";
 
 /**
- * Rota protegida, ainda sem conteudo analitico.
+ * /dashboard/analitico -- lancamentos de custo, linha a linha.
  *
- * A etapa atual do projeto e autenticacao; o conteudo desta tela vem na etapa
- * seguinte. Nao ha numero simulado aqui de proposito -- o projeto nao usa dado
- * mockado. O que esta valendo agora e a protecao: sem sessao, nao se chega.
+ * Vive sob `(privado)`, cujo layout valida a sessao CONTRA O BANCO antes de
+ * renderizar. Sem sessao, o usuario vai para
+ * /login?next=%2Fdashboard%2Fanalitico e nao chega aqui.
+ *
+ * Server Component fino: resolve o fuso e entrega o painel. Os dados vem do
+ * endpoint protegido `/api/dashboard/analytic`, que pagina no banco -- nem esta
+ * pagina nem o navegador tocam no PostgreSQL.
  */
-export default async function AnaliticoPage() {
-  const sessao = await requireSessao("/dashboard/analitico");
+
+export const metadata = { title: "Analítico de custos" };
+
+export default function AnaliticoPage() {
+  let tz = "America/Sao_Paulo";
+  try {
+    tz = getEnv().APP_TZ;
+  } catch {
+    // Ambiente incompleto: o padrao serve, e o erro real de configuracao aparece
+    // na chamada da API, com mensagem propria.
+  }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="veri-display text-3xl text-veri-verde-escuro">Analitico</h1>
-        <p className="mt-2 text-sm text-veri-verde-escuro/70">
-          Rota protegida. Acesso autenticado como{" "}
-          <span className="veri-numero">{sessao.email}</span>.
-        </p>
-      </div>
-
-      <Aviso tom="info" titulo="Tela em construcao">
-        <p>
-          A visao analitica sera construida na proxima etapa. Nenhum dado
-          simulado e exibido aqui.
-        </p>
-      </Aviso>
-    </div>
+    // `useSearchParams` no cliente exige fronteira de Suspense.
+    <Suspense fallback={<CarregandoLinhas linhas={10} />}>
+      <PainelAnalitico tz={tz} />
+    </Suspense>
   );
 }

@@ -89,23 +89,32 @@ exclusivamente a `finops_user`.
 
 ## Dados presentes hoje
 
+> Reinspecionado em **06/08/2026 11:20 UTC**. O ETL rodou às 08:00 UTC e
+> `aws_daily_costs` foi de 515 para 534 linhas. Os números abaixo são os atuais.
+
 ```
 cloud_accounts
   800168045394  conta-piloto        infra / ti / TI-001 / prod   ativa
   147997123577  conta-147997123577  infra / ti / TI-002 / prod   ativa
 
-aws_monthly_costs
-  2026-07  800168045394  15 serviços  US$ 311,41   carregado 04/08 14:23
-  2026-08  147997123577  19 serviços  US$  36,71   carregado 05/08 13:25
-  2026-09  800168045394   1 serviço   US$  37,32   carregado 04/08 14:23
+aws_monthly_costs                                              (35 linhas)
+  2026-07  800168045394  15 serviços  US$ 311,41   carregado 04/08 17:23 UTC
+  2026-08  147997123577  19 serviços  US$  42,61   carregado 05/08 16:25 UTC
+  2026-09  800168045394   1 serviço   US$  37,32   carregado 04/08 17:23 UTC
 
-aws_daily_costs
-  800168045394  01/07 a 04/09  32 dias  16 serviços  US$ 348,73
-  147997123577  01/08 a 04/08   4 dias  19 serviços  US$  36,71
+aws_daily_costs                                               (534 linhas)
+  800168045394  01/07 a 04/09  32 dias  16 serviços  US$ 348,73   carga 04/08 17:23 UTC
+  147997123577  01/08 a 05/08   5 dias  19 serviços  US$  42,61   carga 06/08 08:00 UTC
 ```
 
-Totais mensal e diário conferem por conta (348,73 e 36,71). Moeda única: `USD`.
-Maior serviço: `AmazonEC2` com US$ 269,93 de US$ 385,44 no total (70%).
+Totais mensal e diário conferem por conta (348,73 e 42,61) — por isso as queries
+do dashboard podem usar `aws_daily_costs` como fonte única sem perder fidelidade.
+Moeda única: `USD`. Maior serviço: `AmazonEC2`, ~70% do total.
+
+**A conta piloto continua sem nenhum dia de agosto** (seus 32 dias são julho
+inteiro + 04/09). É a partição `billing_period=2026-08` que não foi criada no
+Athena. Consequência direta: qualquer comparação agosto × julho compara contas
+diferentes, e é por isso que a API devolve `comparavel: false`.
 
 ---
 
@@ -165,7 +174,21 @@ atribui `updated_at = now()` manualmente no upsert.
 `conta-147997123577` — o nome amigável previsto no POP não foi preenchido, e
 `client` está vazio nas duas contas.
 
-### 7. `finops_user` é superusuário
+### 7. `created_at` é `timestamp` sem fuso, e o driver lia como hora local
+
+As tabelas do ETL usam `timestamp without time zone`. O servidor roda em
+`Etc/UTC`, então `now()` grava UTC — mas o `node-postgres` interpreta esse texto
+como hora **local do processo**. Em `America/Sao_Paulo` a carga das 08:00 UTC
+aparecia na tela como 08:00 BRT: três horas adiantada.
+
+→ Corrigido em [`src/lib/database/tipos-pg.ts`](../web/src/lib/database/tipos-pg.ts),
+que registra dois parsers: `timestamp` passa a ser lido como UTC e `date` passa a
+ser devolvido como string `AAAA-MM-DD`, sem virar `Date` (em fuso negativo,
+`2026-08-01` virava `2026-08-01T03:00:00Z` e qualquer formatação em UTC devolvia
+o dia anterior). As tabelas de autenticação usam `timestamptz` e não são
+afetadas.
+
+### 8. `finops_user` é superusuário
 
 O ETL e o Metabase acessam o banco com superusuário. Fora do escopo desta
 aplicação (que terá role próprio de privilégio mínimo), mas fica registrado

@@ -1,0 +1,23 @@
+# POC OVHcloud -- dependencias fixadas.
+#
+# Versoes travadas de proposito: esta POC decide o schema das tabelas de um
+# segundo provedor, e uma mudanca silenciosa no formato de resposta entre
+# execucoes tornaria a comparacao inutil.
+#
+#   python3 -m venv venv
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+
+# Cliente oficial da OVHcloud. Cuida da assinatura das requisicoes, que e um
+# esquema proprio (SHA1 de AK+CK+metodo+URL+corpo+timestamp) -- implementar a mao
+# e fonte garantida de 400 dificil de depurar.
+ovh==1.2.0
+
+# Le o .env sem exportar variavel no shell, o que evita a credencial vazar no
+# histórico do bash ou no `ps` de outro usuario.
+python-dotenv==1.0.1
+
+# Driver PostgreSQL, usado pelo collector (ovh_to_postgres.py) -- a POC nao
+# precisa dele. Mesma variante e versao que o ETL AWS ja usa em producao: evita exigir
+# toolchain de compilacao C na EC2.
+psycopg2-binary==2.9.12

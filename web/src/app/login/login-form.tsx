@@ -16,7 +16,7 @@ export function LoginForm({ next }: { next?: string }) {
       <div>
         <label
           htmlFor="email"
-          className="block text-xs font-medium uppercase tracking-wide text-veri-verde-escuro/70"
+          className="block text-xs font-medium uppercase tracking-wide text-texto-suave"
         >
           E-mail
         </label>
@@ -28,7 +28,7 @@ export function LoginForm({ next }: { next?: string }) {
           required
           autoFocus
           disabled={pendente}
-          className="mt-1.5 w-full rounded-xl border border-veri-verde-claro/60 bg-veri-branco px-4 py-2.5 text-veri-verde-escuro placeholder:text-veri-verde-escuro/35 focus:border-veri-verde-escuro disabled:opacity-60"
+          className="mt-1.5 w-full rounded-xl border border-veri-verde-claro/60 bg-veri-branco px-4 py-2.5 text-veri-verde-escuro placeholder:text-texto-suave focus:border-veri-verde-escuro disabled:opacity-60"
           placeholder="nome@porveri.com.br"
         />
       </div>
@@ -36,7 +36,7 @@ export function LoginForm({ next }: { next?: string }) {
       <div>
         <label
           htmlFor="senha"
-          className="block text-xs font-medium uppercase tracking-wide text-veri-verde-escuro/70"
+          className="block text-xs font-medium uppercase tracking-wide text-texto-suave"
         >
           Senha
         </label>

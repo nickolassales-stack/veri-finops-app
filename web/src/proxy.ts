@@ -30,6 +30,21 @@ export function proxy(request: NextRequest) {
     return NextResponse.next({ request: { headers: cabecalhos } });
   }
 
+  // Rota de dados nao redireciona: um `fetch` que recebe 302 para o HTML do
+  // login veria status 200 e tentaria interpretar pagina como JSON. 401 diz o
+  // que aconteceu no formato que o consumidor entende.
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      {
+        erro: {
+          codigo: "nao-autenticado",
+          mensagem: "Sessao ausente ou expirada. Entre novamente.",
+        },
+      },
+      { status: 401, headers: { "cache-control": "no-store, private" } },
+    );
+  }
+
   const url = request.nextUrl.clone();
   url.pathname = "/login";
   url.search = "";

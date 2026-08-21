@@ -3,28 +3,34 @@
 # Portal FinOps VERI -- imagem de producao
 #
 # Multi-stage com output "standalone": a imagem final nao carrega node_modules
-# completo nem toolchain de build. Roda como usuario sem privilegio.
+# completo nem toolchain de build. Roda como usuario sem privilegio, com
+# filesystem que pode ser montado somente-leitura (ver o compose).
 # =============================================================================
 
 FROM node:22-alpine AS base
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# --- dependencias (inclui devDeps: typescript e tailwind sao necessarios no build)
+# --- dependencias -----------------------------------------------------------
+# `--include=dev` e explicito: typescript e tailwind sao devDependencies e sao
+# necessarios no build. Sem isso, um NODE_ENV=production herdado do ambiente de
+# build faria o npm pular justamente o que o `next build` precisa.
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --include=dev
 
-# --- build
+# --- build ------------------------------------------------------------------
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # O build NAO acessa o banco: a validacao de env e lazy (src/lib/env.ts) e as
-# paginas com dados chamam connection(), o que as exclui do prerender.
+# paginas com dados chamam connection(), o que as exclui do prerender. Por isso
+# nenhuma credencial precisa entrar na imagem em tempo de build.
 RUN npm run build
 
-# --- runtime
+# --- runtime ----------------------------------------------------------------
 FROM base AS runner
 WORKDIR /app
 
@@ -51,8 +57,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/src/lib/auth/password.mjs ./src/l
 USER nextjs
 EXPOSE 3000
 
-# Falha (503) quando o PostgreSQL nao responde -- a aplicacao sem banco nao
-# tem nada util a entregar.
+# Falha (503) quando o PostgreSQL nao responde -- a aplicacao sem banco nao tem
+# nada util a entregar, e e melhor o orquestrador saber disso do que servir uma
+# tela de erro achando que esta tudo bem.
+#
+# `start-period` cobre a partida do Node; durante ela as falhas nao contam para
+# o limite de tentativas.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
   CMD wget -q --spider http://127.0.0.1:3000/api/health || exit 1
 

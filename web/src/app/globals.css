@@ -32,7 +32,28 @@
   --color-fundo: var(--color-veri-offwhite);
   --color-superficie: var(--color-veri-branco);
   --color-texto: var(--color-veri-verde-escuro);
-  --color-texto-suave: #5c7168; /* verde-escuro clareado -- unico tom derivado, para texto secundario legivel */
+
+  /* Verde-escuro clareado -- unico tom DERIVADO da paleta, nao uma cor nova.
+     E o verde-escuro do logotipo misturado a 86% com branco. A proporcao nao e
+     estetica: e o ponto mais claro que ainda passa em contraste sobre a
+     superficie mais escura em que este texto aparece (o painel `bg-veri-verde/10`,
+     medido em rgb(230,235,230)). */
+  --color-texto-suave: #546760;
+
+  /* REGRA DE TEXTO SECUNDARIO -- ha exatamente DOIS tons de tinta:
+     - principal:  text-veri-verde-escuro  -> 8,95:1 sobre branco
+     - secundario: text-texto-suave        -> 6,04:1 sobre branco, 5,00:1 no painel tingido
+
+     NAO use alfa para clarear texto (`text-veri-verde-escuro/70` e afins). A
+     partir de /75 a mistura cai abaixo dos 4,5:1 exigidos pela WCAG AA: /70 da
+     3,97:1, /60 da 3,11:1 e /40 da 2,03:1. Nao existe um terceiro tom legivel
+     nesta paleta -- quando for preciso distinguir um estado (indisponivel, sem
+     dado, desabilitado), distinga pelo CONTEUDO, nao por mais transparencia.
+
+     ATENCAO ao conferir contraste no codigo-fonte: o Tailwind v4 compoe alfa em
+     OKLab, nao em sRGB. `bg-veri-verde/10` sobre branco da rgb(230,235,230), e
+     nao o rgb(245,248,246) que a conta em sRGB sugere -- diferenca suficiente
+     para reprovar um par que "passava" no papel. Meca no navegador. */
   --color-borda: #dde3dd; /* off-white escurecido para separadores de 1px */
   --color-acento: var(--color-veri-verde);
 
@@ -76,6 +97,41 @@ body {
 /* Numeros financeiros alinhados em coluna (tabular) para leitura de tabela. */
 .veri-numero {
   font-variant-numeric: tabular-nums;
+}
+
+/* Pulsacao discreta do esqueleto de carregamento. Respeita quem pediu menos
+   movimento: com prefers-reduced-motion o bloco fica estatico. */
+.veri-pulsando {
+  animation: veri-pulso 1.6s ease-in-out infinite;
+}
+
+@keyframes veri-pulso {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .veri-pulsando {
+    animation: none;
+  }
+}
+
+/* Hachura a 45 graus -- usada onde seria preciso uma cor a mais, que o
+   brandbook nao permite: periodo lancado no futuro e a fatia "Outros".
+   Textura separa sem inventar identidade visual. */
+.veri-textura {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 3px,
+    rgba(255, 255, 255, 0.55) 3px,
+    rgba(255, 255, 255, 0.55) 5px
+  );
 }
 
 /* Foco visivel e dentro da paleta -- acessibilidade de teclado. */

@@ -4,7 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { cookies } from "next/headers";
 
-import { query, queryOne } from "@/lib/db";
+import { query, queryOne } from "@/lib/database";
 import { getEnv } from "@/lib/env";
 
 /**
@@ -170,6 +170,55 @@ export async function buscarUsuarioPorEmail(
     [email],
   );
   return linhas[0] ?? null;
+}
+
+/** Hash da senha atual, para reconferir a credencial antes de troca-la. */
+export async function buscarHashDeSenha(userId: string): Promise<string | null> {
+  const linhas = await query<{ password_hash: string }>(
+    `SELECT password_hash FROM app_users WHERE id = $1 AND active LIMIT 1`,
+    [userId],
+  );
+  return linhas[0]?.password_hash ?? null;
+}
+
+export async function atualizarSenha(userId: string, novoHash: string): Promise<void> {
+  await query(
+    `UPDATE app_users SET password_hash = $2, updated_at = now() WHERE id = $1`,
+    [userId, novoHash],
+  );
+}
+
+/**
+ * Encerra as OUTRAS sessoes do usuario, preservando a atual.
+ *
+ * Trocar a senha deve derrubar qualquer sessao aberta em outro navegador ou
+ * dispositivo -- e o unico jeito de expulsar quem tenha roubado um cookie. Quem
+ * esta trocando a senha continua logado, para nao ser jogado na tela de login
+ * logo depois de acertar tudo.
+ */
+export async function destruirOutrasSessoes(userId: string): Promise<number> {
+  const jar = await cookies();
+  const token = jar.get(NOME_COOKIE)?.value;
+
+  const linhas = token
+    ? await query<{ removidas: string }>(
+        `WITH apagadas AS (
+           DELETE FROM app_sessions
+            WHERE user_id = $1 AND token_hash <> $2
+            RETURNING 1
+         )
+         SELECT count(*) AS removidas FROM apagadas`,
+        [userId, hashToken(token)],
+      )
+    : await query<{ removidas: string }>(
+        `WITH apagadas AS (
+           DELETE FROM app_sessions WHERE user_id = $1 RETURNING 1
+         )
+         SELECT count(*) AS removidas FROM apagadas`,
+        [userId],
+      );
+
+  return Number(linhas[0]?.removidas ?? 0);
 }
 
 export async function marcarLogin(userId: string): Promise<void> {

@@ -1,0 +1,126 @@
+import "server-only";
+
+import type { z } from "zod";
+
+import { ErroDeApi, analisar } from "@/lib/api/http";
+import { lerParametros } from "@/lib/filtros/esquemas";
+import { mensagemDeProviderIncompativel } from "@/lib/filtros/provider";
+import { resolverPeriodo, type PresetPeriodo } from "@/lib/filtros/periodo";
+import { contasDeOutroProvider, filtrarContasInexistentes } from "@/lib/queries/contas";
+import { getContextoTemporal } from "@/lib/queries/dashboard";
+import type { FiltroCusto } from "@/lib/queries/filtros-sql";
+
+/**
+ * Traducao de "o que veio na URL" para "o que a query aceita".
+ *
+ * Um unico lugar faz isso para os cinco endpoints de dashboard, o que garante
+ * que todos apliquem o mesmo periodo padrao, o mesmo teto de dias e a mesma
+ * regra de comparacao. Se cada rota resolvesse periodo por conta propria, dois
+ * cards da mesma tela poderiam mostrar janelas diferentes.
+ */
+
+/** Formato minimo que um esquema de endpoint precisa produzir. */
+export type EntradaFiltroCusto = {
+  periodo?: PresetPeriodo;
+  de?: string;
+  ate?: string;
+  contas: string[];
+  regiao?: string;
+};
+
+export type FiltroResolvido<T extends EntradaFiltroCusto> = {
+  entrada: T;
+  filtro: FiltroCusto;
+  /** Vai para o `meta` da resposta: o cliente precisa saber o que foi aplicado. */
+  meta: Record<string, unknown>;
+};
+
+export async function resolverFiltroCusto<T extends EntradaFiltroCusto>(
+  url: URL,
+  tz: string,
+  esquema: z.ZodType<T>,
+): Promise<FiltroResolvido<T>> {
+  const entrada = analisar(esquema, lerParametros(url));
+  const { filtro, meta } = await montarFiltro(entrada, tz);
+  return { entrada, filtro, meta };
+}
+
+/**
+ * Nucleo compartilhado: entrada JA normalizada -> filtro de query + meta.
+ *
+ * Separado de `resolverFiltroCusto` porque o endpoint do analitico recebe os
+ * parametros com nomes proprios (`startDate`, `accountIds`...) e faz a traducao
+ * antes de chegar aqui. Mantendo o nucleo unico, as duas telas resolvem periodo
+ * pela MESMA regra -- se cada uma tivesse a sua, o analitico poderia mostrar
+ * uma janela diferente da do painel para o mesmo filtro.
+ */
+export async function montarFiltro(
+  entrada: EntradaFiltroCusto,
+  tz: string,
+): Promise<{ filtro: FiltroCusto; meta: Record<string, unknown> }> {
+  const contexto = await getContextoTemporal(tz);
+  const periodo = resolverPeriodo(
+    { preset: entrada.periodo, de: entrada.de, ate: entrada.ate },
+    contexto,
+  );
+
+  // Conta que nao existe no cadastro produziria "US$ 0,00" silencioso, e quem
+  // digitou o id errado concluiria que a conta nao gastou nada.
+  const contasInexistentes = await filtrarContasInexistentes(entrada.contas);
+
+  // Conta de OUTRO provedor e pior do que conta inexistente: ela existe no
+  // cadastro, passa na verificacao acima, e nao tem uma unica linha em
+  // `aws_daily_costs`. O resultado seria zero com cara de legitimo.
+  //
+  // Aqui e ERRO, nao aviso -- diferente do caso acima. Um aviso no `meta`
+  // depende de a tela decidir exibi-lo; um 400 nao tem como passar batido, e
+  // esta e a unica barreira entre uma conta OVH selecionada e um numero errado.
+  // Este e o funil de TODA leitura de custo AWS: os cinco endpoints do painel,
+  // os tres do analitico e as duas exportacoes.
+  const deOutroProvider = await contasDeOutroProvider(entrada.contas, "aws");
+  const recusa = mensagemDeProviderIncompativel(deOutroProvider, "aws");
+  if (recusa) throw new ErroDeApi("parametros-invalidos", recusa);
+
+  const filtro: FiltroCusto = {
+    periodo,
+    contas: entrada.contas,
+    regiao: entrada.regiao,
+  };
+
+  return {
+    filtro,
+    meta: {
+      periodo: {
+        preset: periodo.preset,
+        rotulo: periodo.rotulo,
+        de: periodo.de,
+        ate: periodo.ate,
+        dias: periodo.dias,
+        anterior: periodo.anterior,
+        limitadoPorDadoDisponivel: periodo.limitadoPorDadoDisponivel,
+        existeDadoAlemDaJanela: periodo.existeDadoAlemDaJanela,
+      },
+      filtros: {
+        contas: entrada.contas,
+        todasAsContas: entrada.contas.length === 0,
+        regiao: entrada.regiao ?? null,
+      },
+      base: {
+        hoje: contexto.hoje,
+        maiorDataComDado: contexto.maiorDataComDado,
+      },
+      ...(contasInexistentes.length > 0
+        ? {
+            avisos: [
+              {
+                codigo: "conta-nao-cadastrada",
+                mensagem:
+                  "Conta(s) filtrada(s) que nao existem em cloud_accounts: " +
+                  `${contasInexistentes.join(", ")}. O total pode vir zerado por isso.`,
+              },
+            ],
+          }
+        : {}),
+    },
+  };
+}

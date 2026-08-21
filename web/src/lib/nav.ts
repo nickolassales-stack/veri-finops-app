@@ -1,27 +1,43 @@
-import type { Papel } from "@/lib/auth/tipos";
+import type { Permissao } from "@/lib/auth/permissoes";
 
 /**
  * Navegacao do portal.
  *
  * A lista contem apenas rotas ja implementadas -- nada de link para tela que
- * ainda nao existe. Novas secoes (contas, orcamentos, alertas) entram aqui
- * quando a pagina correspondente for construida.
+ * ainda nao existe.
  *
- * `papel` restringe a exibicao do item. Esconder o link NAO e a protecao: a
- * autorizacao de verdade esta em `requirePapel()` dentro da rota.
+ * `permissao` restringe a EXIBICAO do item. Esconder o link NAO e a protecao: a
+ * autorizacao de verdade esta em `requirePermissao()` dentro de cada pagina e em
+ * `rotaComPermissao()` em cada rota de API. Digitar a URL na barra do navegador
+ * para no mesmo lugar que clicar num link inexistente.
+ *
+ * A restricao mudou de PAPEL para PERMISSAO nesta entrega: com grupos, "quem ve
+ * o menu de configuracoes" deixou de ser sinonimo de "quem e ADMIN" -- um
+ * VIEWER de um grupo com `settings:view` tambem ve.
  */
 export type ItemNav = {
   href: string;
   label: string;
-  papel?: Papel;
+  permissao?: Permissao;
 };
 
 export const navPrincipal: ItemNav[] = [
   { href: "/dashboard", label: "Visao executiva" },
   { href: "/dashboard/analitico", label: "Analitico" },
-  { href: "/diagnostico", label: "Diagnostico", papel: "ADMIN" },
+  { href: "/dashboard/billing", label: "Faturamento", permissao: "billing:view" },
+  { href: "/dashboard/configuracoes", label: "Configuracoes", permissao: "settings:view" },
+  // `/diagnostico` continua respondendo (redireciona para ca), mas o menu ja
+  // aponta para o destino: link de navegacao nao deve gastar um salto.
+  { href: "/dashboard/diagnostico", label: "Diagnostico", permissao: "diagnostics:view" },
 ];
 
-export function navVisivelPara(papel: Papel): ItemNav[] {
-  return navPrincipal.filter((item) => !item.papel || item.papel === papel);
+/**
+ * Filtra pelo que o usuario pode ver.
+ *
+ * Recebe o decisor pronto em vez de consultar sozinho: `nav.ts` e importado por
+ * componente de cliente, e puxar `autorizacao.ts` (que carrega `server-only` e o
+ * driver `pg`) arrastaria codigo de servidor para o bundle do navegador.
+ */
+export function navVisivelPor(pode: (p: Permissao) => boolean): ItemNav[] {
+  return navPrincipal.filter((item) => !item.permissao || pode(item.permissao));
 }

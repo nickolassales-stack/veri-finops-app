@@ -1,0 +1,36 @@
+# Agendamento do collector OVHcloud -- NAO INSTALADO.
+#
+# 09:00 UTC = 06:00 em Sao Paulo. Uma hora depois do ETL AWS (08:00 UTC), de
+# proposito: os dois usam o mesmo PostgreSQL numa instancia de 3,8 GiB que ja
+# roda Metabase; sobrepor as duas cargas e criar contencao sem necessidade.
+#
+# INSTALAR (com backup e rollback):
+#
+#   crontab -l > /opt/finops/backups/crontab-$(date +%F-%H%M).bak
+#   ( crontab -l; cat /opt/finops/ovh-collector/cron-ovh.exemplo | grep -v '^#' ) | crontab -
+#   crontab -l    # conferir
+#
+# ROLLBACK:
+#
+#   crontab /opt/finops/backups/crontab-<data>.bak
+#
+# ANTES DE INSTALAR, confirme que uma execucao manual terminou com sucesso:
+#
+#   /opt/finops/ovh-collector/run-ovh-etl.sh manual
+#   docker exec -i finops-postgres psql -U finops_user -d finops \
+#     -c "SELECT id, status, cost_rows FROM ovh_sync_runs ORDER BY id DESC LIMIT 1;"
+#
+# Agendar coleta que nunca funcionou so produz uma falha silenciosa por dia.
+#
+# INSTALADO NA EC2 DE PRODUCAO EM 20/08/2026, depois de 3 execucoes manuais com
+# sucesso. Ao instalar, LEMBRE de OVH_CRON_INSTALADO=true no .env da aplicacao:
+# senao o Diagnostico afirma que o cron nao existe.
+#
+# O DIRETORIO DE LOG PRECISA EXISTIR ANTES:
+#
+#   mkdir -p /opt/finops/ovh-collector/logs && chmod 700 /opt/finops/ovh-collector/logs
+#
+# Redirecionamento para diretorio inexistente falha no shell do cron, e o
+# comando NAO RODA -- falha diaria silenciosa, sem log que a explique.
+
+0 9 * * * cd /opt/finops/ovh-collector && ./run-ovh-etl.sh cron >> /opt/finops/ovh-collector/logs/cron.log 2>&1
