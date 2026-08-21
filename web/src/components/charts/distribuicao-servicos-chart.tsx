@@ -1,7 +1,6 @@
 "use client";
 
 import { formatParticipacao, formatUSD } from "@/lib/format";
-import type { CustoDoServico } from "@/lib/dashboard/tipos";
 
 /**
  * Distribuicao percentual do custo por servico -- barra de composicao.
@@ -25,14 +24,31 @@ import type { CustoDoServico } from "@/lib/dashboard/tipos";
 /** Fatia menor que isto nao caberia um rotulo dentro. */
 const MINIMO_PARA_ROTULO_INTERNO = 0.09;
 
+/**
+ * MINIMO ESTRUTURAL, e nao `CustoDoServico`.
+ *
+ * A barra so usa nome e valor. Exigir o tipo completo da AWS -- que carrega
+ * `totalAnterior`, `variacao` e `participacao` -- obrigaria a visao OVH a
+ * inventar campos que ela nao tem, so para satisfazer o compilador. Qualquer
+ * objeto com estes dois campos serve, e `CustoDoServico` continua servindo.
+ */
+export type FatiaDeCusto = { servico: string; total: number };
+
 export function DistribuicaoServicosChart({
   itens,
   outros,
   totalDaJanela,
+  formatar = formatUSD,
 }: {
-  itens: CustoDoServico[];
+  itens: FatiaDeCusto[];
   outros: number;
   totalDaJanela: number;
+  /**
+   * Formatador do valor. Padrao `formatUSD` -- a moeda fixa do CUR, entao
+   * nenhum chamador da AWS muda de comportamento. A OVH injeta a moeda que o
+   * servidor escolheu.
+   */
+  formatar?: (valor: unknown) => string;
 }) {
   const fatias = [
     ...itens.map((s) => ({
@@ -95,7 +111,7 @@ export function DistribuicaoServicosChart({
               // Separador de 2px na cor da superficie entre fatias vizinhas.
               marginLeft: i === 0 ? 0 : 2,
             }}
-            title={`${fatia.nome} · ${formatParticipacao(fatia.fracao)} · ${formatUSD(fatia.valor)}`}
+            title={`${fatia.nome} · ${formatParticipacao(fatia.fracao)} · ${formatar(fatia.valor)}`}
           >
             {fatia.agrupada && (
               <span aria-hidden className="veri-textura absolute inset-0" />
@@ -148,7 +164,7 @@ export function DistribuicaoServicosChart({
             </dt>
             <dd className="veri-numero shrink-0 text-sm text-texto-suave">
               {formatParticipacao(fatia.fracao)}
-              <span className="text-texto-suave"> · {formatUSD(fatia.valor)}</span>
+              <span className="text-texto-suave"> · {formatar(fatia.valor)}</span>
             </dd>
           </div>
         ))}

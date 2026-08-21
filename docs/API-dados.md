@@ -295,6 +295,170 @@ Serviços além de `limite` (padrão 8, máx. 20) são somados em **"Outros"**,
 agregado no banco. Isso limita o payload e respeita a regra de cores do
 projeto: a paleta categórica é fixa e não é reciclada para uma série N+1.
 
+## Endpoints da Visão OVH
+
+Seis rotas sob `/api/dashboard/ovh/`. Todas `GET`, todas exigindo sessão **e** a
+permissão `dashboard:view`. Documentação da tela e das regras:
+[dashboard-ovh.md](dashboard-ovh.md).
+
+**Vocabulário próprio.** Estas rotas não aceitam os parâmetros da AWS, e as da
+AWS não aceitam os destas — `ovh_monthly_costs` tem granularidade de **mês**, não
+de dia.
+
+| Parâmetro | Valores | Padrão |
+|---|---|---|
+| `periodo` | `6m`, `12m`, `24m`, `ano-atual`, `personalizado` | `12m` |
+| `deMes` / `ateMes` | `AAAA-MM`, só com `periodo=personalizado` | — |
+| `source` | `invoice`, `usage_current`, `usage_forecast` | **`invoice`** |
+| `projeto` | `ovh_projects.service_name` | todos |
+| `moeda` | ISO de 3 letras | a de maior volume no recorte |
+
+`periodo=30d` devolve **400**, não o padrão em silêncio. Teto de 60 meses por
+consulta.
+
+### `source` tem padrão, e não é opcional
+
+As três origens **não se somam**: o mesmo projeto no mesmo mês tem legitimamente
+linha nas três, e um `sum(amount)` sem a origem triplica o custo. Um `source`
+opcional obrigaria "ausente" a significar uma de duas coisas — somar as três
+(errado) ou escolher uma escondido de quem chamou. O padrão explícito `invoice` é
+a terceira opção: o custo realizado, visível na URL.
+
+### Valor monetário é anulável, e `null` não é zero
+
+Todo total nestas respostas pode vir `null`. **Não trate como zero.** `0` significa
+"a OVH cobrou zero"; `null` significa "não existe afirmação sobre esse custo". O
+`meta.ausencia.mensagem` diz qual das quatro ausências ocorreu.
+
+### ⚠️ `meta.moeda` não é a moeda da resposta
+
+O envelope compartilhado grava `moeda: "USD"` fixo em toda rota do portal. Para as
+rotas OVH esse campo é herança e **não** é autoritativo — a moeda real do recorte
+está em **`meta.filtros.moeda`**.
+
+### `meta` comum a todas
+
+```json
+{ "periodo": { "preset": "12m", "rotulo": "Últimos 12 meses",
+               "deMes": "2025-09", "ateMes": "2026-08", "meses": 12,
+               "anterior": { "deMes": "2024-09", "ateMes": "2025-08", "meses": 12 } },
+  "filtros": { "source": "invoice", "projeto": null, "todosOsProjetos": true,
+               "moeda": "USD", "moedasIgnoradas": [] },
+  "disponibilidade": { "instalado": true, "temAlgumDado": true,
+                       "fontesComDado": ["invoice"],
+                       "moedasNoPeriodo": [ { "moeda": "USD", "total": 30917.39, "linhas": 512 } ] },
+  "estado": "ok",
+  "ausencia": { "mensagem": null, "detalhe": null },
+  "base": { "hoje": "2026-08-20", "mesCorrente": "2026-08" } }
+```
+
+`estado` é um de `ok`, `sem-integracao`, `sem-nenhum-dado`, `fonte-sem-dado`,
+`periodo-sem-dado`. `moedasIgnoradas` não-vazio significa que o recorte tem mais
+de uma moeda e o total **exclui** as listadas — nunca soma.
+
+### `GET /api/dashboard/ovh/summary`
+
+```json
+{ "estado": "ok", "total": 30917.39, "totalAnterior": 12044.10,
+  "variacao": 1.5670, "linhas": 512,
+  "projetosComCusto": 1, "projetosCadastrados": 1, "servicos": 37,
+  "mesesComDado": 24, "primeiroMes": "2024-09", "ultimoMes": "2026-08",
+  "custoSemProjeto": 118.40, "faturas": 11,
+  "estimativaBRL": { "total": 168000.0, "cotacao": { "...": "..." } } }
+```
+
+`estimativaBRL` é `null` — e não um objeto com `total: null` — quando a moeda do
+recorte **não** é USD: a cotação do portal é USD/BRL, e aplicá-la a euro daria um
+número com cara de real sem relação com a fatura.
+
+`custoSemProjeto` é a parte do total que a fatura não atribui a projeto nenhum
+(taxa de domínio, assinatura). Não é erro: `project_service_name = ''` significa
+"não se aplica" no DDL.
+
+### `GET /api/dashboard/ovh/monthly`
+
+```json
+[ { "mes": "2025-09", "total": 1204.41, "linhas": 21 },
+  { "mes": "2026-08", "total": null, "linhas": 0 } ]
+```
+
+Devolve **todos** os meses da janela, inclusive os sem fatura, e o mês sem fatura
+vem com `total: null`. Nem zero (a linha mergulharia até a base e o mês pareceria
+de custo nulo) nem omitido (a linha ligaria dois meses distantes como vizinhos).
+Na OVH a fatura chega dias depois do fechamento, então o mês corrente
+legitimamente ainda não tem `invoice`.
+
+### `GET /api/dashboard/ovh/services`
+
+Top 10 por `service_label`. Alimenta o ranking **e** a distribuição percentual —
+um endpoint só, para a mesma agregação não rodar duas vezes e não divergir.
+
+```json
+[ { "servico": "Public Cloud", "categoria": "instance",
+    "total": 20100.55, "linhas": 240, "participacao": 0.65 } ]
+```
+
+`categoria` é `null` quando o rótulo aparece em mais de uma categoria — exibir uma
+das várias afirmaria uma classificação que o dado não sustenta.
+
+`meta` extra: `totalDaJanela`, `outros`, `servicosNaJanela`, `agrupouEmOutros`.
+`outros` é a diferença entre o total e a soma do topo, e vive no `meta` porque
+"Outros" não é um serviço.
+
+### `GET /api/dashboard/ovh/projects`
+
+```json
+[ { "servicoDoProjeto": "abc123", "nome": "Produção", "semProjeto": false,
+    "total": 30799.0, "linhas": 500, "participacao": 0.996 },
+  { "servicoDoProjeto": "", "nome": null, "semProjeto": true,
+    "total": 118.40, "linhas": 12, "participacao": 0.004 } ]
+```
+
+A linha com `semProjeto: true` é legítima, não lixo. `meta.projetosDisponiveis`
+traz as opções do seletor — derivadas do **mesmo** recorte, para o filtro não
+oferecer um projeto que a janela não contém.
+
+### `GET /api/dashboard/ovh/invoices`
+
+```json
+[ { "billId": "FR12345", "billDate": "2026-08-05", "billingMonth": "2026-07",
+    "totalSemImposto": 1000.0, "imposto": 0.0, "totalComImposto": 1000.0,
+    "moeda": "USD", "linhas": 21 } ]
+```
+
+Não filtra por origem (cabeçalho de fatura não tem `source` — ele **é** o
+faturado), nem por projeto, nem por moeda: cada linha traz a própria `currency`.
+Contar faturas de moedas diferentes é legítimo; somá-las não seria, e por isso
+esta rota não devolve total agregado.
+
+`meta.semMesAtribuido` conta cabeçalhos com `billing_month` **nulo**. A coluna é
+NULLABLE no DDL, e uma fatura sem ela não casa com nenhum filtro de período —
+desapareceria de todas as janelas em silêncio. Sem esse número, a tela diria
+"3 faturas no período" com 4 no banco.
+
+Limite de 60 por resposta; `meta.truncado` avisa.
+
+### `GET /api/dashboard/ovh/sync-status`
+
+Ignora todos os filtros: a saúde do collector não tem recorte.
+
+```json
+{ "situacao": "ok", "rotulo": "Coleta em dia", "tom": "ok",
+  "ultima": { "id": 7, "status": "success", "source": "manual",
+              "startedAt": "2026-08-20T15:53:00.000Z",
+              "finishedAt": "2026-08-20T15:54:01.000Z",
+              "costRows": 512, "invoiceRows": 11 },
+  "ultimoSucesso": { "...": "..." } }
+```
+
+`situacao` usa a **mesma** regra de `/dashboard/diagnostico` (`decidirSituacaoOvh`),
+não uma cópia: se o painel executivo dissesse "coleta em dia" enquanto o
+diagnóstico diz "a última falhou", a tela que atesta a qualidade do dado seria a
+primeira a discordar da que o exibe.
+
+`error_message` **não** sai daqui. Já vem sanitizado do collector, mas o painel
+executivo não é lugar de stack — quem precisa do detalhe abre o diagnóstico.
+
 ## Segurança
 
 - **Sessão verificada contra o banco em toda rota**, dentro do handler. O

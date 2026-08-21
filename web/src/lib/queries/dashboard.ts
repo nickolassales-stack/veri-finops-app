@@ -78,6 +78,7 @@ export type Resumo = {
   comparavel: boolean;
   contasComCusto: number;
   contasComCustoAnterior: number;
+  /** Contas AWS ativas no cadastro. Nao inclui contas de outro provedor. */
   contasAtivasCadastradas: number;
   servicos: number;
   /** Dias da janela que realmente tem linha carregada. */
@@ -147,7 +148,13 @@ export async function getResumo(filtro: FiltroCusto): Promise<Resumo> {
       (array_agg(DISTINCT account_id) FILTER (WHERE ${j.atual})
        IS NOT DISTINCT FROM
        array_agg(DISTINCT account_id) FILTER (WHERE ${j.anterior})) AS mesmas_contas,
-      (SELECT count(*) FROM cloud_accounts WHERE active) AS contas_ativas
+      -- SO contas AWS. cloud_accounts e o cadastro MULTI-PROVEDOR e a conta OVH
+      -- esta la, ativa: sem este recorte o denominador vira 5 com 4 contas AWS,
+      -- e "4 de 5" se le como uma conta AWS que nao gastou nada -- o mesmo erro
+      -- de leitura que temDadoNaJanela e contasDeOutroProvider evitam em outros
+      -- pontos. coalesce porque a coluna e NULLABLE (com default 'aws').
+      (SELECT count(*) FROM cloud_accounts
+        WHERE active AND coalesce(provider, 'aws') = 'aws') AS contas_ativas
     FROM base d
     `,
     p.lista,

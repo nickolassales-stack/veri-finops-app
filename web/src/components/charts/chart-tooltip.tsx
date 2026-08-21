@@ -17,12 +17,23 @@ export function ChartTooltip({
   label,
   payload,
   rotuloExtra,
+  formatar = formatUSD,
 }: {
   active?: boolean;
   label?: string | number;
   payload?: ItemTooltip[];
   /** Texto adicional por ponto, ex. "lancado adiantado". */
   rotuloExtra?: (payload: Record<string, unknown>) => string | null;
+  /**
+   * Formatador do valor. O padrao `formatUSD` cobre a AWS, cuja moeda e fixa
+   * pelo CUR.
+   *
+   * A OVH precisa injetar o proprio: `ovh_monthly_costs.currency` vem por linha
+   * do banco, e imprimir "US$" num valor em euro seria inventar a moeda de uma
+   * fatura. Prop com padrao, e nao troca da funcao interna, para que nenhum
+   * grafico da AWS mude de comportamento.
+   */
+  formatar?: (valor: unknown) => string;
 }) {
   if (!active || !payload?.length) return null;
 
@@ -34,7 +45,7 @@ export function ChartTooltip({
           const extra = item.payload && rotuloExtra ? rotuloExtra(item.payload) : null;
           return (
             <li key={i} className="text-xs text-veri-verde-escuro">
-              <span className="veri-numero font-medium">{formatUSD(item.value)}</span>
+              <span className="veri-numero font-medium">{formatar(item.value)}</span>
               {item.name && <span className="text-texto-suave"> · {item.name}</span>}
               {extra && (
                 <span className="ml-1 text-texto-suave">({extra})</span>

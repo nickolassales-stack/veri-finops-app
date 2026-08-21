@@ -44,10 +44,19 @@ export function BarrasHorizontais({
   itens,
   nomeSerie,
   larguraRotulo = 150,
+  formatar = formatUSD,
 }: {
   itens: ItemBarra[];
   nomeSerie: string;
   larguraRotulo?: number;
+  /**
+   * Formatador do rotulo de valor. Padrao `formatUSD`, que e a moeda fixa do
+   * CUR -- nenhum chamador da AWS muda de comportamento.
+   *
+   * A OVH injeta `formatMoeda(v, moeda)`: `ovh_monthly_costs.currency` vem por
+   * linha, e escrever "US$" num valor em euro seria inventar a moeda.
+   */
+  formatar?: (valor: unknown) => string;
 }) {
   const altura = Math.max(180, itens.length * 38 + 24);
   const temTextura = itens.some((i) => i.textura);
@@ -96,7 +105,7 @@ export function BarrasHorizontais({
               interval={0}
             />
             <Tooltip
-              content={<ChartTooltip />}
+              content={<ChartTooltip formatar={formatar} />}
               cursor={{ fill: CORES.grade, fillOpacity: 0.35 }}
             />
             <Bar
@@ -114,9 +123,9 @@ export function BarrasHorizontais({
               <LabelList
                 dataKey="valor"
                 position="right"
-                // `formatUSD` aceita unknown e cai em "US$ 0,00" para nulo, o
+                // Os formatadores aceitam unknown e caem em "0,00" para nulo, o
                 // que casa com o tipo largo que o recharts passa aqui.
-                formatter={(v) => formatUSD(v)}
+                formatter={(v) => formatar(v)}
                 style={{ fill: CORES.texto, fontSize: 12 }}
                 className="veri-numero"
               />

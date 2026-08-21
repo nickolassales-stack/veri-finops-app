@@ -90,6 +90,42 @@ export function formatMoeda(valor: unknown, moeda: string): string {
   return numero.includes(codigo) ? numero : `${codigo} ${numero}`;
 }
 
+/**
+ * Versao compacta de `formatMoeda`, para eixo de grafico.
+ *
+ * Existe pelo mesmo motivo de `formatUSDCompacto`: "USD 30.917,39" repetido em
+ * seis marcas do eixo Y nao cabe em tela estreita. O que muda e a moeda vir por
+ * parametro, porque a da OVH esta no banco por linha.
+ */
+const compactosPorMoeda = new Map<string, Intl.NumberFormat>();
+
+export function formatMoedaCompacta(valor: unknown, moeda: string): string {
+  const codigo = (moeda || "USD").toUpperCase();
+  let formatador = compactosPorMoeda.get(codigo);
+
+  if (!formatador) {
+    try {
+      formatador = new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: codigo,
+        currencyDisplay: "code",
+        notation: "compact",
+        maximumFractionDigits: 1,
+      });
+    } catch {
+      // Codigo que o ICU nao conhece: numero compacto sem simbolo, nunca uma
+      // moeda diferente da que esta no banco.
+      formatador = new Intl.NumberFormat("pt-BR", {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      });
+    }
+    compactosPorMoeda.set(codigo, formatador);
+  }
+
+  return formatador.format(toNumber(valor));
+}
+
 export function formatInteiro(valor: unknown): string {
   return inteiro.format(toNumber(valor));
 }

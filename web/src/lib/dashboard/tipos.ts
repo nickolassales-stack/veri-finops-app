@@ -71,6 +71,7 @@ export type Resumo = {
   comparavel: boolean;
   contasComCusto: number;
   contasComCustoAnterior: number;
+  /** Contas AWS ativas no cadastro. Nao inclui contas de outro provedor. */
   contasAtivasCadastradas: number;
   servicos: number;
   diasComDado: number;

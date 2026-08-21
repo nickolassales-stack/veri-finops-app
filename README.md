@@ -23,6 +23,7 @@ substituir nem alterar nenhum dos dois.
 - **[docs/dns-nexeeo.md](docs/dns-nexeeo.md)** — domínio de produção `nexeeo.com`, DNS, TLS e o incidente do CNAME
 - **[docs/onboard-nova-conta.md](docs/onboard-nova-conta.md)** — como adicionar uma conta AWS ao pipeline, com o script [scripts/onboard-cur-account.sh](scripts/onboard-cur-account.sh)
 - **[docs/ovh-finops.md](docs/ovh-finops.md)** — OVHcloud como segundo provedor: tabelas, collector, consultas de validação e pendências para o dashboard. Como as telas separam os provedores: seção 5.2 deste README
+- **[docs/dashboard-ovh.md](docs/dashboard-ovh.md)** — a Visão OVH do painel executivo (`/dashboard?provider=ovh`): por que `invoice` é o custo realizado, por que ausência de dado não é custo zero, e por que moeda nunca é somada
 - **[scripts/ovh-collector/README.md](scripts/ovh-collector/README.md)** — como gerar as chaves da OVH e rodar a POC de exploração
 - **[docs/schema-snapshot.md](docs/schema-snapshot.md)** — schema real e achados de qualidade do dado
 - **[docs/API-dados.md](docs/API-dados.md)** — endpoints, filtros e contrato de resposta
@@ -710,18 +711,29 @@ enquanto a normalização não existe.
 
 | Tela | Lê | Contas OVH aparecem? |
 |---|---|---|
-| Visão executiva (`/dashboard`) | `aws_daily_costs` | **Não** — selo "Visão AWS" |
+| Visão executiva, **Visão AWS** (`/dashboard`) | `aws_daily_costs` | **Não** — o seletor diz "Visão AWS" |
+| Visão executiva, **Visão OVH** (`/dashboard?provider=ovh`) | `ovh_*` | **Sim** — tela própria, ver [docs/dashboard-ovh.md](docs/dashboard-ovh.md) |
 | Analítico, as duas abas | `aws_daily_costs`, `aws_monthly_costs` | **Não** — selo "Visão AWS" |
 | Exportações CSV/XLSX | as mesmas tabelas AWS | **Não** — recusa com 400 |
 | Faturamento (`/dashboard/billing`) | `ovh_*` em seção própria | **Sim**, separadas |
 | Diagnóstico | `ovh_sync_runs` | **Sim**, bloco "OVH Collector" |
 | Admin › Contas | `cloud_accounts` inteira | **Sim**, com selo do provedor |
 
-### O total executivo é AWS, e a tela diz isso
+### O total executivo nunca mistura os dois, e a tela diz qual está vendo
 
-O número grande do painel **não inclui OVH**. Sem dizer o recorte, um total sem
-a OVH passaria por total da empresa — por isso o selo "Visão AWS" fica ao lado
-do título, e não num rodapé.
+O número grande do painel é de **um** provedor. Sem dizer o recorte, um total sem
+a OVH passaria por total da empresa — por isso o indicador fica ao lado do
+título, e não num rodapé.
+
+Desde 20/08/2026 esse indicador é um **seletor**: ele continua dizendo o recorte
+e agora oferece o caminho para o outro. `/dashboard` e `/dashboard?provider=aws`
+são a visão AWS; `/dashboard?provider=ovh` é a visão OVH.
+
+**Nenhuma das duas soma nada da outra.** Trocar de visão troca a tela inteira —
+inclusive o vocabulário dos filtros, porque a AWS é diária (`7d`, `30d`) e a OVH
+é mensal (`6m`, `12m`). Os filtros por isso **não** atravessam a troca: repassar
+`?periodo=30d` para a visão OVH faria o parâmetro ser descartado em silêncio, com
+a URL dizendo uma coisa e a tela mostrando outra.
 
 ### Conta OVH numa tela AWS dá erro 400, não zero
 
@@ -764,17 +776,30 @@ contas OVH de quem não soubesse pedi-las.
 | `usage_forecast` | **Previsão** — projeção da OVH para o fechamento |
 
 O mesmo projeto no mesmo mês tem legitimamente linha nas três. Um
-`sum(amount)` sem `GROUP BY source` **triplica** o custo. Por isso Faturamento
-mostra **três cards** e nunca um total único.
+`sum(amount)` sem `GROUP BY source` **triplica** o custo.
+
+Duas telas resolvem isso de formas diferentes, e as duas estão certas porque as
+perguntas são diferentes:
+
+- **Faturamento** mostra **três cards**, um por origem, e nunca um total único —
+  a pergunta é "o que existe".
+- **Visão OVH** do painel executivo escolhe **uma** origem por vez, com `invoice`
+  como padrão, porque a pergunta é "quanto custou". Ali a origem é um filtro de
+  primeira classe na barra, e o campo Zod tem `.default("invoice")` em vez de
+  `.optional()`: ausência não pode significar "some as três".
 
 ### O que ainda não existe
 
 - **Nada é somado entre AWS e OVH.** A AWS é diária e por uso; a OVH é mensal e
   faturada. Somar produziria um número que não responde nem "quanto consumi" nem
-  "quanto vou pagar".
-- **Nenhuma conversão de moeda.** Cada linha OVH carrega `currency`, e a tela
-  exibe o código junto do valor. A moeda de referência de um total multi-cloud é
-  decisão de negócio em aberto.
+  "quanto vou pagar". Isso continua valendo com a Visão OVH no ar: são duas telas
+  na mesma rota, não um painel consolidado.
+- **Nenhuma conversão de moeda, e nenhuma soma entre moedas.** Cada linha OVH
+  carrega `currency`. Quando um recorte tem mais de uma, a Visão OVH **escolhe** a
+  de maior volume, diz qual escolheu e lista as outras com o próprio valor — nunca
+  soma. A estimativa em BRL só aparece quando a moeda é USD, porque a cotação que
+  o portal consulta no Banco Central é USD/BRL. A moeda de referência de um total
+  multi-cloud segue sendo decisão de negócio em aberto.
 - **Cron OVH instalado em 20/08/2026** (`0 9 * * *` UTC, uma hora depois do ETL
   AWS), depois de três coletas manuais com sucesso. O bloco de Diagnóstico
   mostra o horário a partir de `OVH_CRON_INSTALADO` e `OVH_HORARIO_ESPERADO` —

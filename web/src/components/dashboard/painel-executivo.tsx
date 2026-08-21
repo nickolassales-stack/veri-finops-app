@@ -31,6 +31,7 @@ import {
 
 import { BarraFiltros } from "./barra-filtros";
 import { CardsKpi } from "./cards-kpi";
+import { SeletorVisao } from "./seletor-visao";
 
 /**
  * Painel executivo.
@@ -115,12 +116,11 @@ export function PainelExecutivo({ tz }: { tz: string }) {
           <h1 className="veri-display text-3xl text-veri-verde-escuro">
             Visão executiva
           </h1>
-          {/* O selo nao e decoracao: existe conta OVH no cadastro, e esta tela
-              nao a le. Sem dizer o recorte, um total sem a OVH passa por total
-              da empresa. */}
-          <span className="inline-flex items-center rounded-full border border-veri-verde/50 bg-veri-verde/12 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-veri-verde-escuro">
-            Visão AWS
-          </span>
+          {/* Era um selo estatico "Visão AWS". Virou seletor quando a visao OVH
+              passou a existir -- e continua cumprindo a funcao original do selo:
+              dizer o RECORTE. Sem isso, um total sem a OVH passa por total da
+              empresa. Agora, alem de dizer, oferece o caminho para o outro. */}
+          <SeletorVisao atual="aws" />
         </div>
         <p className="mt-2 text-sm text-texto-suave">
           Custos AWS consolidados · valores oficiais em{" "}
