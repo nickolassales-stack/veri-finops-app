@@ -16,9 +16,11 @@
 #
 # ANTES DE INSTALAR, confirme que uma execucao manual terminou com sucesso:
 #
-#   /opt/finops/ovh-collector/run-ovh-etl.sh manual
+#   /opt/finops/ovh-collector/run-ovh-etl.sh manual --all
 #   docker exec -i finops-postgres psql -U finops_user -d finops \
-#     -c "SELECT id, status, cost_rows FROM ovh_sync_runs ORDER BY id DESC LIMIT 1;"
+#     -c "SELECT id, provider_account_id, status, cost_rows FROM ovh_sync_runs \n#         ORDER BY id DESC LIMIT 5;"
+#
+# Uma linha POR CONTA agora: uma coleta de duas contas gera duas linhas.
 #
 # Agendar coleta que nunca funcionou so produz uma falha silenciosa por dia.
 #
@@ -33,4 +35,21 @@
 # Redirecionamento para diretorio inexistente falha no shell do cron, e o
 # comando NAO RODA -- falha diaria silenciosa, sem log que a explique.
 
-0 9 * * * cd /opt/finops/ovh-collector && ./run-ovh-etl.sh cron >> /opt/finops/ovh-collector/logs/cron.log 2>&1
+# AS CONTAS VEM DO BANCO desde a migracao 006.
+#
+# O collector le `cloud_provider_credentials`, cadastrada em Configuracoes >
+# Contas Cloud, e sincroniza TODAS as contas OVH ativas -- uma execucao isolada
+# por conta, com linha propria em `ovh_sync_runs`. `.env` e `accounts.d/` seguem
+# como fallback.
+#
+# `--all` e EXPLICITO aqui por legibilidade: quem le o crontab ve o escopo sem
+# precisar conhecer o padrao do script. Funcionalmente e redundante -- sem
+# escopo o Python assume todas --, e essa redundancia e proposital: a linha
+# ANTIGA (`./run-ovh-etl.sh cron`, sem flag) continua correta e continua
+# coletando tudo. Nao ha janela em que o cron pare por causa da mudanca.
+#
+# Sobre o codigo de saida: 6 significa que ALGUMA conta falhou e outras nao. O
+# cron nao le codigo de saida, entao o sinal util e o resumo no fim do log --
+# procure por "contas que falharam".
+
+0 9 * * * cd /opt/finops/ovh-collector && ./run-ovh-etl.sh cron --all >> /opt/finops/ovh-collector/logs/cron.log 2>&1

@@ -21,3 +21,13 @@ python-dotenv==1.0.1
 # precisa dele. Mesma variante e versao que o ETL AWS ja usa em producao: evita exigir
 # toolchain de compilacao C na EC2.
 psycopg2-binary==2.9.12
+
+# Decifra as credenciais que o portal grava em `cloud_provider_credentials`
+# (AES-256-GCM + HKDF-SHA256). Precisa dar o MESMO resultado que o
+# `node:crypto` do portal -- o contrato esta em contas_ovh.py e a validacao
+# cruzada TS -> Python esta em test_contas_ovh.py.
+#
+# `cryptography` e nao `pycryptodome`: e a implementacao mantida pela PyCA, tem
+# roda pre-compilada para linux x86_64 (nao exige toolchain C na EC2) e expoe
+# AESGCM e HKDF na mesma API.
+cryptography==48.0.1

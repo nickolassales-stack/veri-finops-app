@@ -7,17 +7,43 @@ Le a API da OVH (somente GET) e grava nas tabelas `ovh_*` criadas pela migracao
 `cloud_accounts`, nem o pipeline Athena. Um erro aqui nao pode mudar um numero de
 custo AWS -- e por isso as tabelas sao separadas.
 
-    ./venv/bin/python ovh_to_postgres.py            # source=manual
-    ./venv/bin/python ovh_to_postgres.py --source cron
+    ./venv/bin/python ovh_to_postgres.py --all
+    ./venv/bin/python ovh_to_postgres.py --account ovh-main-ca
+    ./venv/bin/python ovh_to_postgres.py --source cron --all
     ./venv/bin/python ovh_to_postgres.py --dry-run  # coleta e mostra, nao grava
     ./venv/bin/python ovh_to_postgres.py --fechar-orfas
 
+DE ONDE VEM A CREDENCIAL
+
+Tres origens, nesta precedencia (ver contas_ovh.py):
+
+    1. `cloud_provider_credentials`, cifrada, cadastrada pelo portal   <- principal
+    2. `accounts.d/*.env`, um arquivo por conta                        <- fallback
+    3. `.env`, arquivo unico com uma conta                             <- fallback
+
+O banco vence sempre que houver credencial la. Sem essa precedencia, uma rotacao
+feita pela tela seria ignorada em silencio porque alguem esqueceu de limpar o
+`.env` -- e a coleta seguiria funcionando com a credencial antiga, que parece
+certo e esta errado.
+
+Para decifrar, o collector precisa de `APP_CREDENTIALS_ENCRYPTION_KEY` no
+ambiente -- a MESMA do portal. Sem ela, as credenciais do banco sao ignoradas
+com aviso e o fallback assume.
+
+UMA CONTA NAO DERRUBA AS OUTRAS
+
+Cada conta roda isolada, com linha propria em `ovh_sync_runs`. Falha de uma nao
+interrompe as demais; o codigo de saida no fim reflete se alguma falhou.
+
 Codigos de saida:
-    0  sucesso
-    2  .env ausente/incompleto, ou faltam variaveis do PostgreSQL
+    0  sucesso em todas as contas
+    1  a unica conta processada falhou
+    2  configuracao: `.env` ausente, PostgreSQL sem variaveis, ou nenhuma conta
+       utilizavel, ou `--account` com id inexistente
     3  biblioteca ausente
-    4  a OVH recusou a autenticacao
-    5  falha ao gravar no PostgreSQL
+    4  a OVH recusou a autenticacao      (mantido para o caso de conta unica)
+    5  falha ao gravar no PostgreSQL     (mantido para o caso de conta unica)
+    6  falha PARCIAL ou total com mais de uma conta -- veja o resumo no log
 
 RAW_JSON SEMPRE, NORMALIZACAO DEPOIS
 
@@ -28,11 +54,15 @@ novo na API -- que tem rate limit e nao devolve o passado. `usage/current` e
 fotografia do mes em andamento: o consumo de ontem nao pode ser consultado
 novamente.
 
-O QUE NUNCA ENTRA NO BANCO
+O QUE NUNCA ENTRA NO BANCO EM CLARO
 
-As chaves da OVH (ficam no .env, modo 600) e o campo `pdfUrl` das faturas, que
-embute um token capaz de baixar o PDF sem autenticacao -- grava-lo seria
-distribuir um segredo para todo mundo com SELECT.
+As chaves da OVH e o campo `pdfUrl` das faturas, que embute um token capaz de
+baixar o PDF sem autenticacao -- grava-lo seria distribuir um segredo para todo
+mundo com SELECT.
+
+As chaves agora ESTAO no banco, mas cifradas em AES-256-GCM, em
+`cloud_provider_credentials`, e a chave que as decifra nunca esta la. Nada em
+`ovh_*` guarda credencial.
 """
 
 from __future__ import annotations
@@ -46,8 +76,23 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# `contas_ovh` vive ao lado deste arquivo. Funciona porque o Python coloca o
+# diretorio do SCRIPT em sys.path[0] -- vale tanto para
+# `python /opt/finops/ovh-collector/ovh_to_postgres.py` quanto para o wrapper.
+from contas_ovh import (
+    ContaOvh,
+    Descoberta,
+    ErroDeCredencial,
+    chave_mestra_do_ambiente,
+    descobrir_contas,
+    filtrar,
+    resumo_para_log,
+    sem_segredo,
+)
+
 RAIZ = Path(__file__).resolve().parent
 ARQUIVO_ENV = RAIZ / ".env"
+DIRETORIO_ACCOUNTS_D = RAIZ / "accounts.d"
 
 # Janela de faturas a coletar. 12 meses cobre comparacao ano a ano sem varrer o
 # historico inteiro de uma conta antiga a cada execucao diaria.
@@ -140,17 +185,15 @@ def carregar_config() -> dict[str, Any]:
 
     load_dotenv(ARQUIVO_ENV)
     cfg: dict[str, Any] = {}
-    for chave in ("OVH_ENDPOINT", "OVH_APPLICATION_KEY", "OVH_APPLICATION_SECRET",
-                  "OVH_CONSUMER_KEY", "OVH_PROVIDER_ACCOUNT_ID"):
-        valor = (os.getenv(chave) or "").strip()
-        if not valor:
-            log(f"ERRO: {chave} vazia no .env")
-            sys.exit(2)
-        cfg[chave] = valor
-    if cfg["OVH_ENDPOINT"] not in ENDPOINTS_VALIDOS:
-        log(f"ERRO: OVH_ENDPOINT invalido ({cfg['OVH_ENDPOINT']}). Use: {', '.join(ENDPOINTS_VALIDOS)}")
-        sys.exit(2)
-    cfg["OVH_ACCOUNT_ALIAS"] = (os.getenv("OVH_ACCOUNT_ALIAS") or "").strip() or None
+
+    # As chaves OVH_* NAO sao mais exigidas aqui.
+    #
+    # Elas passaram a ser fallback: a fonte principal e `cloud_provider_credentials`,
+    # cadastrada pelo portal. Exigi-las neste ponto impediria o caso que a mudanca
+    # existe para permitir -- credencial no banco e `.env` sem nenhuma chave OVH.
+    #
+    # O `.env` CONTINUA obrigatorio, porem, por outro motivo: e dele que saem as
+    # variaveis do PostgreSQL, sem as quais nao ha como nem ler as credenciais.
     cfg["MESES_FATURA"] = int(os.getenv("OVH_MESES_FATURA") or MESES_FATURA_PADRAO)
 
     # PostgreSQL: as mesmas variaveis que o ETL AWS ja usa.
@@ -162,6 +205,31 @@ def carregar_config() -> dict[str, Any]:
             sys.exit(2)
         cfg[chave] = valor
     return cfg
+
+
+def cfg_da_conta(base: dict[str, Any], conta: ContaOvh) -> dict[str, Any]:
+    """
+    Copia da config base com os campos da conta preenchidos.
+
+    Existe para NAO precisar mexer em `coletar` nem em `gravar`. As duas funcoes
+    ja liam `cfg["OVH_*"]`, e sao a parte testada em producao desde 20/08/2026 --
+    reescreve-las para receber `ContaOvh` seria a mudanca mais arriscada desta
+    entrega, em troca de nada.
+
+    Copia e nao mutacao: a base e reusada em todas as contas do laco, e mutar
+    faria a segunda conta herdar a credencial da primeira em caso de campo
+    ausente. Duas contas coletando a mesma conta da OVH, sem aviso.
+    """
+    especifico = dict(base)
+    especifico.update(
+        OVH_ENDPOINT=conta.endpoint,
+        OVH_APPLICATION_KEY=conta.application_key,
+        OVH_APPLICATION_SECRET=conta.application_secret,
+        OVH_CONSUMER_KEY=conta.consumer_key,
+        OVH_PROVIDER_ACCOUNT_ID=conta.provider_account_id,
+        OVH_ACCOUNT_ALIAS=conta.alias,
+    )
+    return especifico
 
 
 def conectar_banco(cfg: dict[str, Any], autocommit: bool = False):
@@ -184,22 +252,52 @@ class Execucao:
     de erro que some junto com o erro nao serve para nada.
     """
 
-    def __init__(self, cfg: dict[str, Any], source: str, log_path: str | None) -> None:
+    def __init__(
+        self,
+        cfg: dict[str, Any],
+        source: str,
+        log_path: str | None,
+        provider_account_id: str | None = None,
+    ) -> None:
         self.cfg, self.source, self.log_path = cfg, source, log_path
+        self.provider_account_id = provider_account_id
         self.id: int | None = None
         self.conexao = None
+        #: `True` quando o banco ainda nao tem a coluna da migracao 007.
+        self.sem_coluna_conta = False
 
     def abrir(self) -> None:
         try:
             self.conexao = conectar_banco(self.cfg, autocommit=True)
             with self.conexao.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO ovh_sync_runs (started_at, status, source, log_path) "
-                    "VALUES (now(), 'running', %s, %s) RETURNING id",
-                    (self.source, self.log_path),
-                )
+                # Tenta com `provider_account_id`; sem a migracao 007 o Postgres
+                # devolve 42703 (undefined_column) e caimos na forma antiga.
+                #
+                # Degradar em vez de exigir a migracao e deliberado: o collector
+                # novo tem de rodar num banco que ainda nao migrou, senao a
+                # ordem de deploy passa a ser obrigatoria e uma coleta se perde
+                # se alguem inverter os passos.
+                try:
+                    cur.execute(
+                        "INSERT INTO ovh_sync_runs "
+                        "(started_at, status, source, log_path, provider_account_id) "
+                        "VALUES (now(), 'running', %s, %s, %s) RETURNING id",
+                        (self.source, self.log_path, self.provider_account_id),
+                    )
+                except Exception as exc:
+                    if getattr(exc, "pgcode", None) != "42703":
+                        raise
+                    self.sem_coluna_conta = True
+                    self.conexao.rollback()
+                    cur.execute(
+                        "INSERT INTO ovh_sync_runs (started_at, status, source, log_path) "
+                        "VALUES (now(), 'running', %s, %s) RETURNING id",
+                        (self.source, self.log_path),
+                    )
                 self.id = cur.fetchone()[0]
-            log(f"execucao registrada: ovh_sync_runs.id={self.id}")
+            conta = self.provider_account_id or "(sem conta)"
+            aviso = " [sem coluna de conta: rode a migracao 007]" if self.sem_coluna_conta else ""
+            log(f"execucao registrada: ovh_sync_runs.id={self.id} conta={conta}{aviso}")
         except Exception as exc:
             # Monitoramento NUNCA derruba o que ele monitora.
             log(f"aviso: nao foi possivel registrar inicio ({sanitizar_erro(exc)})")
@@ -555,19 +653,138 @@ def gravar(conexao, dados: dict[str, Any]) -> dict[str, int]:
     return contagens
 
 
+# ------------------------------------------------------------ uma conta so
+def sincronizar_conta(
+    conta: ContaOvh,
+    base: dict[str, Any],
+    source: str,
+    log_path: str | None,
+    dry_run: bool,
+) -> tuple[bool, dict[str, int], str | None]:
+    """
+    Coleta e grava UMA conta, isolada.
+
+    Devolve `(ok, contagens, erro_sanitizado)`. NUNCA levanta: o laco de fora
+    precisa seguir para a proxima conta, e uma excecao vazando daqui pararia a
+    coleta das demais -- justamente o que a isolacao existe para impedir.
+
+    Cada conta tem `Execucao` propria, com o seu `provider_account_id`. Uma linha
+    por conta em `ovh_sync_runs`: sem isso, uma falha parcial apareceria como
+    "houve falha hoje" sem dizer de qual conta, e o diagnostico ficaria pior do
+    que era com uma conta so.
+    """
+    import ovh
+
+    cfg = cfg_da_conta(base, conta)
+    execucao = Execucao(cfg, source, log_path, conta.provider_account_id)
+    if not dry_run:
+        execucao.abrir()
+    contagens = {"contas": 0, "projetos": 0, "custos": 0, "faturas": 0, "linhas": 0}
+
+    try:
+        cliente = ovh.Client(
+            endpoint=conta.endpoint,
+            application_key=conta.application_key,
+            application_secret=conta.application_secret,
+            consumer_key=conta.consumer_key,
+        )
+        collector = Collector(cliente, cfg)
+        dados = coletar(collector, cfg)
+
+        log(f"  {conta.provider_account_id}: coletado "
+            f"{len(dados['projetos'])} projetos, {len(dados['faturas'])} faturas, "
+            f"{len(dados['custos'])} linhas de custo")
+        for aviso in collector.avisos[:20]:
+            log(f"    aviso: {aviso}")
+        if len(collector.avisos) > 20:
+            log(f"    ... e mais {len(collector.avisos) - 20} avisos")
+
+        if dry_run:
+            log(f"  {conta.provider_account_id}: dry-run, nada gravado")
+            return True, {
+                "contas": 1,
+                "projetos": len(dados["projetos"]),
+                "faturas": len(dados["faturas"]),
+                "custos": len(dados["custos"]),
+                "linhas": 0,
+            }, None
+
+        conexao = conectar_banco(cfg)
+        try:
+            contagens = gravar(conexao, dados)
+        finally:
+            conexao.close()
+
+        log(f"  {conta.provider_account_id}: gravado "
+            f"projetos={contagens['projetos']} faturas={contagens['faturas']} "
+            f"linhas_fatura={contagens['linhas']} custos={contagens['custos']}")
+        execucao.fechar("success", contagens)
+        return True, contagens, None
+
+    except Exception as exc:
+        msg = sanitizar_erro(exc)
+        log(f"  {conta.provider_account_id}: FALHA -- {msg}")
+        execucao.fechar("failed", contagens, msg)
+        return False, contagens, msg
+
+
 # --------------------------------------------------------------------- main
+def descobrir(base: dict[str, Any], apenas: str | None) -> Descoberta:
+    """
+    Descobre as contas, tolerando banco indisponivel.
+
+    O banco pode falhar e ainda assim haver `.env` utilizavel -- e nesse caso a
+    coleta deve acontecer. Sem este `try`, uma indisponibilidade momentanea do
+    Postgres impediria o fallback de sequer ser tentado.
+    """
+    conexao = None
+    try:
+        conexao = conectar_banco(base, autocommit=True)
+    except Exception as exc:
+        log(f"aviso: banco indisponivel para ler credenciais ({sanitizar_erro(exc)})")
+
+    try:
+        d = descobrir_contas(
+            conexao,
+            chave_mestra_b64=chave_mestra_do_ambiente(),
+            diretorio_accounts_d=DIRETORIO_ACCOUNTS_D,
+            arquivo_env=ARQUIVO_ENV,
+        )
+    finally:
+        if conexao is not None:
+            try:
+                conexao.close()
+            except Exception:
+                pass
+
+    for aviso in d.avisos:
+        log(f"aviso: {sem_segredo(aviso)}")
+
+    d.contas = filtrar(d.contas, apenas)
+    return d
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Collector OVHcloud -> PostgreSQL")
     ap.add_argument("--source", default="manual", choices=("manual", "cron", "unknown"))
     ap.add_argument("--dry-run", action="store_true", help="coleta e mostra; nao grava")
     ap.add_argument("--fechar-orfas", action="store_true", help="so encerra execucoes travadas")
     ap.add_argument("--log-path", default=os.getenv("OVH_LOG_PATH"))
+
+    # `--all` e `--account` sao mutuamente exclusivos, e o padrao (nenhum dos
+    # dois) equivale a `--all`. O padrao permissivo e proposital: o cron em
+    # producao hoje chama sem argumento nenhum, e ele nao pode parar de coletar
+    # porque o codigo passou a esperar uma flag nova.
+    escopo = ap.add_mutually_exclusive_group()
+    escopo.add_argument("--all", action="store_true", help="todas as contas OVH ativas (padrao)")
+    escopo.add_argument("--account", metavar="ID", help="somente esta conta (provider_account_id)")
+
     args = ap.parse_args()
 
-    cfg = carregar_config()
+    base = carregar_config()
 
     if args.fechar_orfas:
-        n = fechar_orfas(cfg)
+        n = fechar_orfas(base)
         log(f"execucoes orfas encerradas: {n}")
         return 0
 
@@ -578,60 +795,59 @@ def main() -> int:
         log(f"ERRO: dependencia ausente ({exc}). pip install -r requirements.txt")
         return 3
 
-    import ovh
-
-    execucao = Execucao(cfg, args.source, args.log_path)
-    if not args.dry_run:
-        execucao.abrir()
-    contagens = {"contas": 0, "projetos": 0, "custos": 0, "faturas": 0, "linhas": 0}
-
     try:
-        cliente = ovh.Client(
-            endpoint=cfg["OVH_ENDPOINT"],
-            application_key=cfg["OVH_APPLICATION_KEY"],
-            application_secret=cfg["OVH_APPLICATION_SECRET"],
-            consumer_key=cfg["OVH_CONSUMER_KEY"],
+        descoberta = descobrir(base, args.account)
+    except ErroDeCredencial as exc:
+        # `--account` com id que nao existe cai aqui. Sair com erro em vez de
+        # coletar nada: um "sucesso" que nao coletou faria alguem concluir que a
+        # conta esta sem custo.
+        log(f"ERRO: {sem_segredo(str(exc))}")
+        return 2
+
+    if not descoberta.contas:
+        log("ERRO: nenhuma conta OVH utilizavel encontrada.")
+        log("  Verifique: credencial cadastrada em Configuracoes > Contas Cloud,")
+        log("  ou accounts.d/*.env, ou as chaves OVH_* no .env.")
+        return 2
+
+    log(f"origem das credenciais: {descoberta.origem}")
+    log(f"contas a sincronizar ({len(descoberta.contas)}): "
+        f"{resumo_para_log(descoberta.contas)}")
+
+    falhas: list[str] = []
+    total = {"contas": 0, "projetos": 0, "custos": 0, "faturas": 0, "linhas": 0}
+
+    for conta in descoberta.contas:
+        ok, contagens, _erro = sincronizar_conta(
+            conta, base, args.source, args.log_path, args.dry_run
         )
-        collector = Collector(cliente, cfg)
-        dados = coletar(collector, cfg)
+        for chave in total:
+            total[chave] += contagens.get(chave, 0)
+        if not ok:
+            falhas.append(conta.provider_account_id)
 
-        log(f"coletado: {len(dados['projetos'])} projetos, "
-            f"{len(dados['faturas'])} faturas, {len(dados['custos'])} linhas de custo")
-        for aviso in collector.avisos[:20]:
-            log(f"  aviso: {aviso}")
-        if len(collector.avisos) > 20:
-            log(f"  ... e mais {len(collector.avisos) - 20} avisos")
+    # Resumo SEM SEGREDO: ids, contagens e quem falhou. Nenhum campo de credencial.
+    log("--- resumo ---")
+    log(f"contas processadas: {len(descoberta.contas)}  "
+        f"sucesso: {len(descoberta.contas) - len(falhas)}  falhas: {len(falhas)}")
+    log(f"totais: projetos={total['projetos']} faturas={total['faturas']} "
+        f"linhas_fatura={total['linhas']} custos={total['custos']}")
+    if falhas:
+        log(f"contas que falharam: {', '.join(falhas)}")
 
-        if args.dry_run:
-            log("dry-run: nada gravado")
-            print(json.dumps({"projetos": len(dados["projetos"]),
-                              "faturas": len(dados["faturas"]),
-                              "custos": len(dados["custos"]),
-                              "avisos": collector.avisos}, indent=2, ensure_ascii=False, default=str))
-            return 0
+    if args.dry_run:
+        log("dry-run: nada gravado")
 
-        conexao = conectar_banco(cfg)
-        try:
-            contagens = gravar(conexao, dados)
-        finally:
-            conexao.close()
-
-        log(f"gravado: contas={contagens['contas']} projetos={contagens['projetos']} "
-            f"faturas={contagens['faturas']} linhas_fatura={contagens['linhas']} "
-            f"custos={contagens['custos']}")
-        execucao.fechar("success", contagens)
+    if not falhas:
         return 0
 
-    except Exception as exc:
-        msg = sanitizar_erro(exc)
-        log(f"FALHA: {msg}")
-        execucao.fechar("failed", contagens, msg)
-        # Distingue "a OVH recusou" de "o banco recusou": sao times diferentes.
-        if any(t in msg.lower() for t in ("invalid", "credential", "forbidden", "401", "403")):
-            return 4
-        if "psycopg2" in msg or "connection" in msg.lower():
-            return 5
+    # Codigo 6 para falha PARCIAL ou total em modo multi-conta. Com uma conta so,
+    # os codigos historicos (4 = a OVH recusou, 5 = o banco recusou) continuam
+    # valendo -- o RUNBOOK e o cron dependem deles, e trocar por 6 quebraria a
+    # leitura de quem opera. Ver o cabecalho deste arquivo.
+    if len(descoberta.contas) == 1:
         return 1
+    return 6
 
 
 if __name__ == "__main__":

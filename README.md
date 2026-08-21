@@ -18,6 +18,8 @@ substituir nem alterar nenhum dos dois.
 | [docs/](docs/) | Runbook, schema real do banco, decisões de visualização, brandbook VERI |
 | [assets/logos/](assets/logos/) | Identidade visual VERI |
 
+- **[docs/ovh-collector-multiconta.md](docs/ovh-collector-multiconta.md)** — collector OVH lendo credenciais do banco: descoberta de contas, coleta isolada por conta, codigos de saida, fallback e plano de descomissionamento
+- **[docs/CONTAS-CLOUD.md](docs/CONTAS-CLOUD.md)** — Contas Cloud: cadastro multi-provedor, credenciais OVH cifradas, por que cifrado e não hash, rotação e o contrato de leitura do collector
 - **[docs/RUNBOOK-app.md](docs/RUNBOOK-app.md)** — deploy detalhado, role do banco, riscos
 - **[docs/homologacao-multicloud.md](docs/homologacao-multicloud.md)** — homologação do deploy multi-provider (`f08a383`, 20/08/2026): checklist com atribuição por observador, o que automação não alcança e o rollback
 - **[docs/dns-nexeeo.md](docs/dns-nexeeo.md)** — domínio de produção `nexeeo.com`, DNS, TLS e o incidente do CNAME
@@ -37,6 +39,8 @@ Banco e carga:
 | [scripts/migrations/001-billing-period.sql](scripts/migrations/001-billing-period.sql) | Separa período financeiro de data de uso. **Reversível** ([rollback](scripts/migrations/001-billing-period-rollback.sql)) |
 | [scripts/migrations/002-admin-configuracoes.sql](scripts/migrations/002-admin-configuracoes.sql) | Alias de contas, grupos, vínculos e permissões. **Reversível** ([rollback](scripts/migrations/002-admin-configuracoes-rollback.sql)) — mas guarda dado que só existe ali |
 | [scripts/migrations/005-ovh-collector.sql](scripts/migrations/005-ovh-collector.sql) | Tabelas `ovh_*` do segundo provedor. Aditiva, não toca em nada da AWS. **Reversível** ([rollback](scripts/migrations/005-ovh-collector-rollback.sql)) |
+| [scripts/migrations/006-credenciais-provedor.sql](scripts/migrations/006-credenciais-provedor.sql) | `cloud_provider_credentials`: credencial de API por conta, cifrada em AES-256-GCM. Aditiva. **Reversível** ([rollback](scripts/migrations/006-credenciais-provedor-rollback.sql)) — mas o dado foi digitado a partir do console da OVH e **não é regenerável pelo sistema** |
+| [scripts/migrations/007-sync-runs-por-conta.sql](scripts/migrations/007-sync-runs-por-conta.sql) | `ovh_sync_runs.provider_account_id`: uma linha de execucao por conta OVH. Aditiva, coluna nullable. **Reversivel** ([rollback](scripts/migrations/007-sync-runs-por-conta-rollback.sql)) |
 | [scripts/etl/athena_to_postgres.py](scripts/etl/athena_to_postgres.py) | Carga Athena → PostgreSQL. Roda na EC2, em `/opt/finops/etl/` |
 | [scripts/backfill-billing-period.py](scripts/backfill-billing-period.py) | Preenche o período de cobrança nas linhas já carregadas |
 | [scripts/reconciliacao-cost-explorer.sql](scripts/reconciliacao-cost-explorer.sql) | Confere o portal contra o AWS Cost Explorer |
@@ -383,6 +387,7 @@ O `.env` real vive ao lado do `docker-compose.yml` da EC2, com `chmod 600`, e
 | Variável | Padrão | Para que serve |
 |---|---|---|
 | `APP_BUILD_CONTEXT` | — **(obrigatória)** | Caminho absoluto de `web/` na EC2 |
+| `APP_CREDENTIALS_ENCRYPTION_KEY` | — *(opcional)* | base64 de **32 bytes** (`openssl rand -base64 32`). Cifra as credenciais de provedor. Sem ela, só o bloco de credenciais em Contas Cloud para de funcionar — o resto do portal segue. **Nunca vai para o Git** |
 | `APP_IMAGE_TAG` | `local` | Tag da imagem. `anterior` é reservada ao rollback, que também aceita a variável para escolher outra tag — e recusa `local` |
 | `PG_DB` | `finops` | Banco (o mesmo do ETL e do Metabase) |
 | `APP_PG_HOST` | `postgres` | Nome do serviço na rede interna do compose |
@@ -472,7 +477,7 @@ tabela: uma permissão só significa alguma coisa se alguma rota a verifica.
 | Custos | `analytic:view` | analítico, lançamento a lançamento |
 | Custos | `analytic:export` | baixar CSV e XLSX |
 | Configurações | `settings:view` | entrar na área administrativa |
-| Configurações | `settings:accounts` | alias e metadados das contas AWS |
+| Configurações | `settings:accounts` | alias e metadados das contas de qualquer provedor. **Não** inclui credenciais de API — essas exigem papel ADMIN, que nenhum grupo concede |
 | Configurações | `settings:users` | criar, ativar e desativar usuários |
 | Configurações | `settings:groups` | criar grupos e distribuir permissões |
 | Operação | `diagnostics:view` | tela de diagnóstico |
