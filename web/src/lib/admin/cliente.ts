@@ -22,15 +22,26 @@ export function ler<T, M = unknown>(caminho: string, sinal?: AbortSignal) {
  * Devolve `dados` ja desembrulhado, porque toda tela de escrita quer o registro
  * atualizado para reconciliar a lista sem uma segunda ida ao servidor.
  */
-export async function escrever<T>(
+export type MetodoDeEscrita = "POST" | "PATCH" | "PUT" | "DELETE";
+
+/**
+ * A chamada em si. `escrever` e `escreverComMeta` sao dois recortes desta.
+ *
+ * DELETE nao leva corpo: alguns intermediarios descartam corpo de DELETE, e uma
+ * rota que dependesse dele falharia so em producao, atras do proxy.
+ */
+async function requisitar<T, M>(
   caminho: string,
-  metodo: "POST" | "PATCH",
+  metodo: MetodoDeEscrita,
   corpo: unknown,
-): Promise<T> {
+): Promise<{ dados: T; meta: M | undefined }> {
   const resposta = await fetch(caminho, {
     method: metodo,
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify(corpo),
+    headers:
+      metodo === "DELETE"
+        ? { accept: "application/json" }
+        : { "content-type": "application/json", accept: "application/json" },
+    body: metodo === "DELETE" ? undefined : JSON.stringify(corpo),
     cache: "no-store",
     credentials: "same-origin",
   });
@@ -53,7 +64,38 @@ export async function escrever<T>(
     );
   }
 
-  return (lido as { dados: T }).dados;
+  const envelope = lido as { dados: T; meta?: M } | null;
+  return { dados: envelope?.dados as T, meta: envelope?.meta };
+}
+
+export async function escrever<T>(
+  caminho: string,
+  metodo: MetodoDeEscrita,
+  corpo: unknown,
+): Promise<T> {
+  return (await requisitar<T, unknown>(caminho, metodo, corpo)).dados;
+}
+
+/**
+ * Igual a `escrever`, mas devolve `meta` tambem.
+ *
+ * Existe separada em vez de mudar o retorno de `escrever`: tres paineis ja
+ * consomem `escrever` esperando o registro direto, e alargar o tipo obrigaria a
+ * mexer nos tres para ganhar um campo que so uma tela usa. O bloco de
+ * credenciais precisa de `meta` porque o aviso de chave duplicada sai por la --
+ * ele nao e o registro salvo, e um sucesso com ressalva.
+ */
+export async function escreverComMeta<T, M = unknown>(
+  caminho: string,
+  metodo: MetodoDeEscrita,
+  corpo: unknown,
+): Promise<{ dados: T; meta: M | undefined }> {
+  return requisitar<T, M>(caminho, metodo, corpo);
+}
+
+/** DELETE. Devolve o que a rota respondeu em `dados`. */
+export async function remover<T = unknown>(caminho: string): Promise<T> {
+  return (await requisitar<T, unknown>(caminho, "DELETE", undefined)).dados;
 }
 
 /**

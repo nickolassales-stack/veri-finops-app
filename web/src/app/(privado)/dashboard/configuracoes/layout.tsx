@@ -17,7 +17,7 @@ import { HEADER_CAMINHO } from "@/proxy";
 
 const ABAS = [
   { href: "/dashboard/configuracoes", label: "Visao geral", exato: true },
-  { href: "/dashboard/configuracoes/contas", label: "Contas AWS" },
+  { href: "/dashboard/configuracoes/contas", label: "Contas Cloud" },
   { href: "/dashboard/configuracoes/usuarios", label: "Usuarios" },
   { href: "/dashboard/configuracoes/grupos", label: "Grupos" },
   { href: "/dashboard/configuracoes/permissoes", label: "Permissoes" },

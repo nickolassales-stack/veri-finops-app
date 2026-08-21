@@ -71,8 +71,11 @@ export const ROTULOS: Record<Permissao, DescricaoPermissao> = {
   },
   "settings:accounts": {
     area: "Configuracoes",
-    titulo: "Gerenciar contas AWS",
-    descricao: "Editar alias, unidade, centro de custo e fechamento de fatura.",
+    titulo: "Gerenciar contas cloud",
+    descricao:
+      "Editar alias, unidade, centro de custo e ambiente das contas de qualquer " +
+      "provedor. NAO inclui credenciais de API: essas exigem papel ADMIN, que " +
+      "nenhum grupo concede.",
   },
   "settings:users": {
     area: "Configuracoes",

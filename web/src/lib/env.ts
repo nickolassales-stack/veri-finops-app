@@ -20,6 +20,23 @@ const envSchema = z.object({
   /** Corta query travada antes que ela prejudique o banco de producao. */
   PG_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 
+  /**
+   * Chave-mestra da cifragem de credencial de provedor. base64 de 32 bytes.
+   *
+   * `optional()` e a validacao FRACA sao deliberadas, e o motivo importa: quem
+   * valida de verdade e `lib/cripto/segredos.ts`, que exige exatamente 32 bytes
+   * apos decodificar. Duplicar a regra aqui criaria duas fontes que sairiam de
+   * sincronia, e a de la e a que precisa falhar -- ela roda no momento de cifrar.
+   *
+   * Opcional porque a aplicacao INTEIRA funciona sem ela: dashboard, analitico,
+   * faturamento e diagnostico nao tocam credencial. Sem a chave, apenas o bloco
+   * de credenciais em Contas Cloud se recusa a operar, com mensagem propria.
+   * Torna-la obrigatoria derrubaria o portal por causa de uma tela.
+   *
+   * NUNCA vai para o Git. Gere com: openssl rand -base64 32
+   */
+  APP_CREDENTIALS_ENCRYPTION_KEY: z.string().min(1).optional(),
+
   /** Fuso usado para formatar datas na interface. */
   APP_TZ: z.string().min(1).default("America/Sao_Paulo"),
 

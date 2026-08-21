@@ -9,6 +9,10 @@ import { Card } from "@/components/ui/card";
 import { CarregandoLinhas, ErroDoBloco, Vazio } from "@/components/ui/estado";
 import { SeloProvider } from "@/components/ui/selo-provider";
 import { escrever, ler, mensagemDoErro } from "@/lib/admin/cliente";
+import {
+  BlocoCredenciaisOvh,
+  type CredencialVisivel,
+} from "@/components/admin/bloco-credenciais-ovh";
 // De `@/lib/billing/pagamento`, que e puro -- e NAO de `esquemas-admin`, que
 // puxa `password.mjs` e com ele o `node:crypto` para dentro do navegador.
 import { ROTULO_STATUS } from "@/lib/billing/pagamento";
@@ -28,6 +32,18 @@ type Conta = {
   configurada: boolean;
   /** Somente leitura aqui -- ver o comentario do tipo em queries/admin/contas.ts. */
   provider: string;
+  /**
+   * `null` em tres situacoes que a tela distingue com ajuda de `provider` e de
+   * `podeVerCredenciais`: conta AWS (nao se aplica), conta OVH sem cadastro, e
+   * usuario nao-ADMIN (o servidor nao envia o campo).
+   */
+  credencial: CredencialVisivel | null;
+};
+
+type MetaContas = {
+  podeVerCredenciais?: boolean;
+  ultimaSincronizacaoOvh?: string | null;
+  contasOvh?: number;
 };
 
 /**
@@ -41,6 +57,7 @@ function rotuloPagamento(valor: string): string {
 
 export function PainelContas() {
   const [contas, setContas] = useState<Conta[] | null>(null);
+  const [meta, setMeta] = useState<MetaContas>({});
   const [erro, setErro] = useState<string | null>(null);
   const [editando, setEditando] = useState<string | null>(null);
 
@@ -62,10 +79,13 @@ export function PainelContas() {
 
     void (async () => {
       try {
-        const { dados } = await ler<Conta[]>("/api/admin/accounts");
+        const { dados, meta: recebido } = await ler<Conta[], MetaContas>(
+          "/api/admin/accounts",
+        );
         if (!vivo) return;
         setErro(null);
         setContas(dados);
+        setMeta(recebido ?? {});
       } catch (e) {
         if (!vivo) return;
         setErro(mensagemDoErro(e));
@@ -86,13 +106,26 @@ export function PainelContas() {
     setEditando(null);
   };
 
+  /**
+   * Atualiza SO a credencial de uma conta.
+   *
+   * Separado de `substituir` porque o bloco de credenciais nao fecha o modo de
+   * edicao: depois de salvar a credencial o operador quase sempre clica em
+   * "Testar conexao" em seguida, e fechar o painel o obrigaria a reabrir.
+   */
+  const substituirCredencial = (accountId: string, nova: CredencialVisivel | null) => {
+    setContas((atual) =>
+      (atual ?? []).map((c) => (c.accountId === accountId ? { ...c, credencial: nova } : c)),
+    );
+  };
+
   if (erro && !contas?.length) {
     return <ErroDoBloco mensagem={erro} aoTentarNovamente={recarregar} />;
   }
   if (contas === null) return <CarregandoLinhas linhas={3} />;
   if (contas.length === 0) {
     return (
-      <Vazio titulo="Nenhuma conta AWS no cadastro">
+      <Vazio titulo="Nenhuma conta cloud no cadastro">
         As contas vêm de <span className="veri-numero">cloud_accounts</span>. Enquanto não
         houver nenhuma lá, não há o que configurar aqui.
       </Vazio>
@@ -113,6 +146,12 @@ export function PainelContas() {
           filtros do painel executivo nem do analítico, que hoje leem apenas dados AWS.
           O provedor em si não é editável: trocá-lo desligaria a conta da sua origem de
           dado.
+        </p>
+        <p>
+          Contas <strong>OVH</strong> têm, além disso, um bloco de{" "}
+          <strong>credenciais de API</strong>, restrito a administradores. Contas{" "}
+          <strong>AWS</strong> não têm esse bloco e não é omissão: a AWS autentica por
+          IAM role da instância, sem segredo para guardar no portal.
         </p>
       </Aviso>
 
@@ -140,6 +179,32 @@ export function PainelContas() {
             <FormularioConta conta={conta} aoSalvar={substituir} />
           ) : (
             <ResumoConta conta={conta} />
+          )}
+
+          {/*
+            So conta OVH, e so para ADMIN. As duas condicoes sao independentes: a
+            primeira e sobre o que o bloco significa (a AWS nao tem credencial a
+            guardar), a segunda e sobre quem pode ve-lo.
+
+            `podeVerCredenciais` vem do SERVIDOR e nao de uma inferencia local.
+            Sem ele, "nao ha credencial cadastrada" e "voce nao pode ver as
+            credenciais" seriam indistinguiveis para a tela -- e ela mostraria o
+            formulario vazio a um nao-ADMIN, cujo envio voltaria 403.
+          */}
+          {conta.provider === "ovh" && meta.podeVerCredenciais && (
+            <BlocoCredenciaisOvh
+              accountId={conta.accountId}
+              credencial={conta.credencial}
+              ultimaSincronizacao={meta.ultimaSincronizacaoOvh ?? null}
+              aoMudar={(nova) => substituirCredencial(conta.accountId, nova)}
+            />
+          )}
+
+          {conta.provider === "ovh" && !meta.podeVerCredenciais && (
+            <p className="mt-4 border-t border-veri-offwhite pt-3 text-xs text-texto-suave">
+              Esta conta tem credenciais de API. Somente administradores podem
+              consultá-las ou alterá-las.
+            </p>
           )}
         </Card>
       ))}

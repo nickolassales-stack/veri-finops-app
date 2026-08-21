@@ -88,6 +88,14 @@ services:
       AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-12}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
 
+      # Cifragem das credenciais de provedor (Contas Cloud).
+      #
+      # `:-` e nao `:?` de proposito: a variavel e OPCIONAL. Exigi-la aqui faria o
+      # `up` falhar em qualquer ambiente que ainda nao a tenha -- inclusive nesta
+      # producao, que hoje nao a tem --, derrubando o portal inteiro por causa de
+      # uma tela. Sem ela, apenas o bloco de credenciais se recusa a operar.
+      APP_CREDENTIALS_ENCRYPTION_KEY: ${APP_CREDENTIALS_ENCRYPTION_KEY:-}
+
       # Cotacao USD/BRL (estimativa visual). Unica chamada externa da aplicacao:
       # HTTPS para o Banco Central. Use `nenhum` se a saida for bloqueada -- o
       # portal continua funcionando, exibindo apenas USD.

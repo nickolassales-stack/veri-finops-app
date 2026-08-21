@@ -23,9 +23,9 @@ const SECOES: {
 }[] = [
   {
     href: "/dashboard/configuracoes/contas",
-    titulo: "Contas AWS",
+    titulo: "Contas Cloud",
     descricao:
-      "Dê um nome amigável a cada conta e registre unidade, centro de custo e fechamento de fatura. O alias vale em toda a aplicação.",
+      "Dê um nome amigável a cada conta de qualquer provedor e registre unidade, centro de custo e ambiente. Contas OVH têm também as credenciais de API, restritas a administradores.",
     permissao: "settings:accounts",
   },
   {

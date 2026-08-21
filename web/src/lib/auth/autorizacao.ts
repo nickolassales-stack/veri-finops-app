@@ -91,6 +91,22 @@ export async function podeAtual(permissao: Permissao): Promise<boolean> {
 }
 
 /**
+ * O usuario da requisicao e ADMIN?
+ *
+ * Existe separado de `podeAtual` porque nao e a mesma pergunta: `can()` deixa um
+ * grupo conceder qualquer permissao a um nao-ADMIN, entao permissao nao consegue
+ * expressar exclusividade de papel. Ver o comentario de `rotaSomenteAdmin`.
+ *
+ * Usado pela tela para decidir se o bloco de credenciais e RENDERIZADO. Esconder
+ * o bloco nao e a protecao -- a protecao e a rota --, mas evitar que a tela peca
+ * um dado que sera negado e o que impede um erro na cara do usuario.
+ */
+export async function ehAdminAtual(): Promise<boolean> {
+  const sessao = await getSessao();
+  return sessao?.papel === "ADMIN";
+}
+
+/**
  * Exige uma permissao numa PAGINA.
  *
  * Sem sessao vai para /login (via `requireSessao`); com sessao e sem a

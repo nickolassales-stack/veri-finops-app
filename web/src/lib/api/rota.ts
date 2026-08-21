@@ -150,6 +150,86 @@ export function rotaComPermissao<P extends Record<string, string> = Record<strin
 }
 
 /**
+ * Envelope das rotas que exigem PAPEL ADMIN -- nao uma permissao.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE NAO DA PARA FAZER ISSO COM `rotaComPermissao`
+ *
+ * `can()` tem duas saidas antes de olhar o conjunto do usuario: ADMIN recebe
+ * `true` para tudo, e qualquer permissao pode ser CONCEDIDA A UM GRUPO. Um
+ * VIEWER num grupo com `settings:credentials` passaria por
+ * `rotaComPermissao(..., "settings:credentials", ...)`.
+ *
+ * Isso e correto para o resto do sistema -- o desenho de grupos existe
+ * justamente para delegar. Mas "somente ADMIN pode mexer em credencial" e um
+ * requisito sobre PAPEL, e nenhuma permissao consegue expressa-lo: criar
+ * `settings:credentials` daria a ILUSAO de exclusividade, com uma tela de
+ * grupos capaz de conceder a chave a qualquer um, em dois cliques e sem aviso.
+ *
+ * Por isso a checagem aqui e `sessao.papel !== "ADMIN"`, direta, sem passar por
+ * `can()`. E o unico ponto do sistema que decide por papel em vez de permissao,
+ * e a excecao esta registrada porque um leitor futuro tenderia a "corrigi-la"
+ * para o padrao.
+ *
+ * A permissao `settings:accounts` continua valendo para o RESTO da tela de
+ * Contas Cloud: alias, unidade, centro de custo e ambiente seguem delegaveis.
+ * So o bloco de credencial e que nao.
+ */
+export function rotaSomenteAdmin<P extends Record<string, string> = Record<string, never>>(
+  nome: string,
+  manipulador: (ctx: ContextoAdmin<P>) => Promise<ResultadoRota>,
+) {
+  return async function handler(
+    request: Request,
+    contexto?: { params: Promise<P> },
+  ): Promise<Response> {
+    try {
+      const sessao = await getSessao();
+      if (!sessao) {
+        return respostaErro(
+          "nao-autenticado",
+          "Sessao ausente ou expirada. Entre novamente.",
+        );
+      }
+
+      if (sessao.papel !== "ADMIN") {
+        // A recusa vem ANTES de ler o corpo: quem nao pode nem consegue sondar a
+        // validacao para descobrir quais campos a rota espera.
+        return respostaErro(
+          "sem-permissao",
+          "Somente administradores podem consultar ou alterar credenciais de provedor.",
+        );
+      }
+
+      const params = ((await contexto?.params) ?? {}) as P;
+
+      let corpo: unknown = {};
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        corpo = await request.json().catch(() => ({}));
+      }
+
+      const tz = getEnv().APP_TZ;
+      const { dados, meta } = await manipulador({
+        url: new URL(request.url),
+        sessao,
+        tz,
+        params,
+        corpo,
+      });
+
+      return respostaOk(dados, {
+        ...meta,
+        moeda: "USD",
+        timezone: tz,
+        geradoEm: new Date().toISOString(),
+      });
+    } catch (err) {
+      return traduzirFalha(nome, err);
+    }
+  };
+}
+
+/**
  * Variante para rotas que devolvem ARQUIVO, nao o envelope `{ dados, meta }`.
  *
  * Mesma porta de entrada: sessao verificada contra o banco antes de qualquer

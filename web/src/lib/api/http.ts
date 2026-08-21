@@ -26,6 +26,10 @@ export type CodigoErro =
   | "consulta-excedeu-tempo"
   | "exportacao-muito-grande"
   | "banco-indisponivel"
+  // Falta configuracao do SERVIDOR (variavel de ambiente ausente ou invalida).
+  // Separado de "parametros-invalidos" porque a entrada do usuario esta certa --
+  // dizer 400 mandaria ele corrigir o formulario para um problema de deploy.
+  | "configuracao-invalida"
   | "erro-interno";
 
 const STATUS_POR_CODIGO: Record<CodigoErro, number> = {
@@ -45,6 +49,9 @@ const STATUS_POR_CODIGO: Record<CodigoErro, number> = {
   "exportacao-muito-grande": 413,
   "consulta-excedeu-tempo": 504,
   "banco-indisponivel": 503,
+  // 503 pelo mesmo motivo de banco-indisponivel: o servico existe, esta
+  // incompleto, e quem resolve e quem opera o deploy -- nao quem esta na tela.
+  "configuracao-invalida": 503,
   "erro-interno": 500,
 };
 
