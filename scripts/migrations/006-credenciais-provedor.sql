@@ -168,6 +168,11 @@ CREATE INDEX IF NOT EXISTS cloud_provider_credentials_status_idx
 --
 -- ON DELETE CASCADE: credencial de conta que nao existe mais e passivo puro --
 -- segredo sobrevivendo a propria finalidade. Some com a conta.
+--
+-- Os dois `::text` abaixo NAO sao decoracao. `pg_attribute.attname` e do tipo
+-- `name`, entao `array_agg` devolve `name[]`, e o PostgreSQL nao tem operador
+-- `name[] = text[]` -- sem o cast a migracao aborta com "operator does not
+-- exist". Aconteceu na primeira tentativa de aplicar em producao.
 DO $$
 BEGIN
     IF EXISTS (
@@ -176,10 +181,10 @@ BEGIN
           JOIN pg_class t ON t.oid = c.conrelid
          WHERE t.relname = 'cloud_accounts'
            AND c.contype IN ('p', 'u')
-           AND (SELECT array_agg(a.attname ORDER BY a.attname)
+           AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text)
                   FROM pg_attribute a
                  WHERE a.attrelid = c.conrelid
-                   AND a.attnum = ANY (c.conkey)) = ARRAY['account_id']
+                   AND a.attnum = ANY (c.conkey)) = ARRAY['account_id']::text[]
     ) AND NOT EXISTS (
         SELECT 1 FROM pg_constraint
          WHERE conname = 'cloud_provider_credentials_conta_fk'
