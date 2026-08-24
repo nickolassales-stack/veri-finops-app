@@ -9,7 +9,17 @@ id_rsa*
 id_ed25519*
 *.pub
 secrets/
-credentials
+
+# `credentials` SEM barra casa com qualquer arquivo OU DIRETORIO de mesmo nome,
+# em qualquer profundidade. Assim escrito, engoliu
+# `web/src/app/api/admin/accounts/[accountId]/credentials/` -- duas rotas de API
+# ficaram fora de dois commits sem que `git add` ou `git status` dissessem nada,
+# e o portal foi para producao respondendo 404 na tela de credenciais.
+#
+# Ancorado na raiz e nos caminhos reais em que um arquivo de segredo aparece.
+/credentials
+**/.aws/credentials
+**/credentials.json
 
 # ---- Node / Next.js ----
 node_modules/
