@@ -26,6 +26,7 @@ substituir nem alterar nenhum dos dois.
 - **[docs/onboard-nova-conta.md](docs/onboard-nova-conta.md)** — como adicionar uma conta AWS ao pipeline, com o script [scripts/onboard-cur-account.sh](scripts/onboard-cur-account.sh)
 - **[docs/ovh-finops.md](docs/ovh-finops.md)** — OVHcloud como segundo provedor: tabelas, collector, consultas de validação e pendências para o dashboard. Como as telas separam os provedores: seção 5.2 deste README
 - **[docs/dashboard-ovh.md](docs/dashboard-ovh.md)** — a Visão OVH do painel executivo (`/dashboard?provider=ovh`): por que `invoice` é o custo realizado, por que ausência de dado não é custo zero, e por que moeda nunca é somada
+- **[docs/analitico-ovh.md](docs/analitico-ovh.md)** — Analitico com duas visoes (`/dashboard/analitico?provider=ovh`): diferenca de grao entre AWS e OVH, as quatro abas OVH, origem invoice/current/forecast, por que a OVH e mensal, export separado por provedor e limites atuais
 - **[scripts/ovh-collector/README.md](scripts/ovh-collector/README.md)** — como gerar as chaves da OVH e rodar a POC de exploração
 - **[docs/schema-snapshot.md](docs/schema-snapshot.md)** — schema real e achados de qualidade do dado
 - **[docs/API-dados.md](docs/API-dados.md)** — endpoints, filtros e contrato de resposta

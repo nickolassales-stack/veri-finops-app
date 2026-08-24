@@ -26,12 +26,23 @@ import Link from "next/link";
  * dizendo uma coisa enquanto a tela mostra outra.
  */
 
-const VISOES = [
-  { provider: "aws", rotulo: "Visão AWS", href: "/dashboard" },
-  { provider: "ovh", rotulo: "Visão OVH", href: "/dashboard?provider=ovh" },
-] as const;
+/**
+ * `base` existe porque o mesmo seletor serve o painel executivo e o Analitico.
+ * Duplicar o componente duplicaria as decisoes acima -- e a proxima tela a ganhar
+ * visao OVH herdaria a copia que alguem esquecesse de atualizar.
+ */
+export function SeletorVisao({
+  atual,
+  base = "/dashboard",
+}: {
+  atual: "aws" | "ovh";
+  base?: string;
+}) {
+  const VISOES = [
+    { provider: "aws", rotulo: "Visão AWS", href: base },
+    { provider: "ovh", rotulo: "Visão OVH", href: `${base}?provider=ovh` },
+  ] as const;
 
-export function SeletorVisao({ atual }: { atual: "aws" | "ovh" }) {
   return (
     <nav
       aria-label="Provedor exibido no painel"

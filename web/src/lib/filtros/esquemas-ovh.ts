@@ -157,12 +157,33 @@ export const camposMoedaOvh = {
     .optional(),
 };
 
+/**
+ * `ovh_provider_accounts.provider_account_id` -- o id interno do VERI FinOps,
+ * nao o `nichandle` da OVH.
+ *
+ * O `nichandle` e um e-mail e identifica a PESSOA da conta; usa-lo como filtro
+ * poria endereco de terceiro na URL e no histórico do navegador. O
+ * `provider_account_id` e opaco e do nosso cadastro.
+ *
+ * Vazio vira `undefined` = todas as contas. O mesmo tratamento de `projeto`.
+ */
+export const camposContaOvh = {
+  conta: z
+    .string()
+    .trim()
+    .max(20, "Identificador de conta muito longo (maximo 20 caracteres).")
+    .regex(/^[A-Za-z0-9_-]*$/, "Identificador de conta invalido.")
+    .transform((v) => (v === "" ? undefined : v))
+    .optional(),
+};
+
 // ----------------------------------------------------------------- esquemas
 
 export const esquemaDashboardOvh = z
   .object({
     ...camposPeriodoMensal,
     ...camposFonteOvhComPadrao,
+    ...camposContaOvh,
     ...camposProjetoOvh,
     ...camposMoedaOvh,
   })

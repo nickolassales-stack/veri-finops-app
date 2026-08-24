@@ -28,6 +28,8 @@ export type FiltrosOvh = {
   deMes: string;
   ateMes: string;
   source: FonteOvh;
+  /** Vazio significa "todas as contas OVH". */
+  conta: string;
   /** Vazio significa "todos os projetos". */
   projeto: string;
   /** Vazio significa "a moeda de maior volume, escolhida pelo servidor". */
@@ -41,6 +43,7 @@ export const FILTROS_OVH_PADRAO: FiltrosOvh = {
   // `invoice` e o padrao porque e o custo REALIZADO. `usage_forecast` como
   // padrao poria uma projecao no card principal do painel executivo.
   source: "invoice",
+  conta: "",
   projeto: "",
   moeda: "",
 };
@@ -72,6 +75,7 @@ export function lerFiltrosOvh(params: URLSearchParams): FiltrosOvh {
     deMes: ehMesISOValido(deMes) ? deMes : "",
     ateMes: ehMesISOValido(ateMes) ? ateMes : "",
     source,
+    conta: (params.get("conta") ?? "").trim(),
     projeto: (params.get("projeto") ?? "").trim(),
     moeda: FORMATO_MOEDA.test(moeda) ? moeda.toUpperCase() : "",
   };
@@ -100,6 +104,7 @@ export function escreverFiltrosOvh(filtros: FiltrosOvh): URLSearchParams {
   if (filtros.source !== FILTROS_OVH_PADRAO.source) {
     params.set("source", filtros.source);
   }
+  if (filtros.conta) params.set("conta", filtros.conta);
   if (filtros.projeto) params.set("projeto", filtros.projeto);
   if (filtros.moeda) params.set("moeda", filtros.moeda);
 
@@ -125,6 +130,7 @@ export function paramsDaApiOvh(filtros: FiltrosOvh): URLSearchParams {
   }
 
   params.set("source", filtros.source);
+  if (filtros.conta) params.set("conta", filtros.conta);
   if (filtros.projeto) params.set("projeto", filtros.projeto);
   if (filtros.moeda) params.set("moeda", filtros.moeda);
 
@@ -194,6 +200,7 @@ export function temFiltroOvhAplicado(filtros: FiltrosOvh): boolean {
   return (
     filtros.periodo !== FILTROS_OVH_PADRAO.periodo ||
     filtros.source !== FILTROS_OVH_PADRAO.source ||
+    filtros.conta !== "" ||
     filtros.projeto !== "" ||
     filtros.moeda !== ""
   );

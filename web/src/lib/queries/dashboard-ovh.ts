@@ -49,6 +49,8 @@ export type FiltroOvh = {
   ateMes: string;
   /** Origem do custo. Obrigatoria -- ver regra 1 no cabecalho. */
   source: FonteOvh;
+  /** `provider_account_id`. `undefined` = todas as contas OVH. */
+  conta?: string;
   /** `ovh_projects.service_name`. `undefined` = todos os projetos. */
   projeto?: string;
   /** Codigo ISO. Obrigatorio em tudo que soma -- ver regra 2. */
@@ -69,6 +71,10 @@ function condicoesBase(f: FiltroOvhSemMoeda, p: ConstrutorParams): string[] {
     `c.billing_month <= to_date(${p.add(f.ateMes)}, 'YYYY-MM')`,
     `c.source = ${p.add(f.source)}`,
   ];
+
+  if (f.conta !== undefined) {
+    condicoes.push(`c.provider_account_id = ${p.add(f.conta)}`);
+  }
 
   if (f.projeto !== undefined) {
     condicoes.push(`c.project_service_name = ${p.add(f.projeto)}`);
@@ -487,6 +493,17 @@ export async function contarProjetosOvh(): Promise<number> {
 
 export type FaturaOvh = {
   billId: string;
+  /** `provider_account_id` -- a fatura e da conta, nao do projeto. */
+  conta: string;
+  /**
+   * `autorenew` | `purchase-servers` | `purchase-web` | `null`.
+   *
+   * A API de faturamento da OVH NAO expoe situacao de pagamento -- nao ha campo
+   * "pago/em aberto" em `/me/bill`. `category` e o que existe: diz por que a
+   * fatura foi emitida, nao se foi quitada. Rotular isso de "status" na tela
+   * faria alguem concluir que a fatura esta paga.
+   */
+  categoria: string | null;
   /** "AAAA-MM-DD" ou `null`. */
   billDate: string | null;
   /** "AAAA-MM" ou `null`. */
@@ -519,17 +536,19 @@ export type FaturasOvh = {
  * de cabecalho para exibir um numero.
  */
 export async function contarFaturasOvh(
-  f: Pick<FiltroOvh, "deMes" | "ateMes">,
+  f: Pick<FiltroOvh, "deMes" | "ateMes" | "conta">,
 ): Promise<number> {
   const p = new ConstrutorParams();
   const de = p.add(f.deMes);
   const ate = p.add(f.ateMes);
+  const filtroConta =
+    f.conta !== undefined ? ` AND provider_account_id = ${p.add(f.conta)}` : "";
 
   const linha = await queryOne<{ total: string }>(
     `SELECT count(*) AS total
        FROM ovh_invoice_headers
       WHERE billing_month >= to_date(${de}, 'YYYY-MM')
-        AND billing_month <= to_date(${ate}, 'YYYY-MM')`,
+        AND billing_month <= to_date(${ate}, 'YYYY-MM')${filtroConta}`,
     p.lista,
   );
   return Number(linha?.total ?? 0);
@@ -544,13 +563,17 @@ export async function contarFaturasOvh(
  * e por isso esta funcao devolve linhas e nao total.
  */
 export async function getFaturasOvh(
-  f: Pick<FiltroOvh, "deMes" | "ateMes">,
+  f: Pick<FiltroOvh, "deMes" | "ateMes" | "conta">,
   limite = 60,
+  deslocamento = 0,
 ): Promise<FaturasOvh> {
   const p = new ConstrutorParams();
   const de = p.add(f.deMes);
   const ate = p.add(f.ateMes);
   const lim = p.add(limite);
+  const off = p.add(deslocamento);
+  const filtroConta =
+    f.conta !== undefined ? ` AND h.provider_account_id = ${p.add(f.conta)}` : "";
 
   const itens = await query<{
     bill_id: string;
@@ -560,6 +583,8 @@ export async function getFaturasOvh(
     total_sem_imposto: string | null;
     imposto: string | null;
     currency: string | null;
+    conta: string;
+    categoria: string | null;
     linhas: string;
   }>(
     `SELECT h.bill_id,
@@ -569,6 +594,11 @@ export async function getFaturasOvh(
             h.total_without_tax                     AS total_sem_imposto,
             h.tax                                   AS imposto,
             h.currency,
+            h.provider_account_id                   AS conta,
+            -- So a chave category, e nao o raw_json inteiro: aquele objeto
+            -- carrega password (a senha do PDF da fatura na OVH) e url. Uma
+            -- coluna extraida no servidor da o rotulo sem levar o resto junto.
+            h.raw_json->>'category'                 AS categoria,
             coalesce(l.linhas, 0)                   AS linhas
        FROM ovh_invoice_headers h
        LEFT JOIN (SELECT provider_account_id, bill_id, count(*) AS linhas
@@ -577,9 +607,9 @@ export async function getFaturasOvh(
               ON l.provider_account_id = h.provider_account_id
              AND l.bill_id             = h.bill_id
       WHERE h.billing_month >= to_date(${de}, 'YYYY-MM')
-        AND h.billing_month <= to_date(${ate}, 'YYYY-MM')
+        AND h.billing_month <= to_date(${ate}, 'YYYY-MM')${filtroConta}
       ORDER BY h.billing_month DESC, h.bill_date DESC NULLS LAST, h.bill_id DESC
-      LIMIT ${lim}`,
+      LIMIT ${lim} OFFSET ${off}`,
     p.lista,
   );
 
@@ -590,6 +620,8 @@ export async function getFaturasOvh(
   return {
     itens: itens.map((l) => ({
       billId: l.bill_id,
+      conta: l.conta,
+      categoria: l.categoria,
       billDate: l.bill_date,
       billingMonth: l.billing_month,
       totalComImposto: toNumber(l.total_com_imposto),

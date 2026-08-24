@@ -69,6 +69,21 @@ export function semDado(estado: EstadoDadoOvh): boolean {
   return estado !== "ok";
 }
 
+/**
+ * A tela está na visão OVH?
+ *
+ * Regra única, em vez de `params.get("provider") === "ovh"` repetido no
+ * cabeçalho, nas abas e no conteúdo. Os três precisam concordar: se divergirem,
+ * o cabeçalho diz "Visão OVH" com tabela AWS embaixo — e ninguém percebe até
+ * comparar um número com a fatura.
+ *
+ * Qualquer outro valor, inclusive nenhum, é AWS. Ela é o padrão histórico, e um
+ * valor digitado errado na URL não deve trocar o provedor exibido em silêncio.
+ */
+export function ehVisaoOvh(params: { get(k: string): string | null }): boolean {
+  return params.get("provider") === "ovh";
+}
+
 export const ROTULO_FONTE = {
   invoice: "Faturado",
   usage_current: "Uso corrente",

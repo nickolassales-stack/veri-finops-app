@@ -20,7 +20,9 @@ import {
   type PeriodoMensalResolvido,
 } from "@/lib/filtros/periodo-mensal";
 import {
+  getContasOvh,
   getDisponibilidadeOvh,
+  type ContaOvh,
   ovhInstaladoNoBanco,
   type DisponibilidadeOvh,
   type FiltroOvh,
@@ -88,6 +90,7 @@ export async function resolverFiltroOvh(
     deMes: periodo.deMes,
     ateMes: periodo.ateMes,
     source: entrada.source,
+    conta: entrada.conta,
     projeto: entrada.projeto,
   };
 
@@ -106,7 +109,14 @@ export async function resolverFiltroOvh(
     });
   }
 
-  const disponibilidade = await getDisponibilidadeOvh(semMoeda);
+  // `getContasOvh` entra no MESMO Promise.all: as duas leituras sao
+  // independentes, e a lista de contas alimenta o seletor de TODAS as abas do
+  // Analitico -- nao so a de projetos. Uma linha em `ovh_provider_accounts` por
+  // conta, entao o custo e desprezivel perto de uma segunda ida ao banco.
+  const [disponibilidade, contas] = await Promise.all([
+    getDisponibilidadeOvh(semMoeda),
+    getContasOvh(),
+  ]);
   const escolha = escolherMoeda(disponibilidade.moedas, entrada.moeda);
 
   return montar({
@@ -116,6 +126,7 @@ export async function resolverFiltroOvh(
     instalado: true,
     disponibilidade,
     escolha,
+    contas,
   });
 }
 
@@ -126,6 +137,7 @@ function montar(ctx: {
   instalado: boolean;
   disponibilidade: DisponibilidadeOvh;
   escolha: ReturnType<typeof escolherMoeda>;
+  contas?: ContaOvh[];
 }): FiltroOvhResolvido {
   const { entrada, periodo, disponibilidade, escolha } = ctx;
 
@@ -187,6 +199,12 @@ function montar(ctx: {
     estado,
     podeBRL: podeEstimarBRL(escolha.moeda),
     meta: {
+      contasDisponiveis: (ctx.contas ?? []).map((c) => ({
+        id: c.providerAccountId,
+        // `alias` e o rotulo humano; `nichandle` NAO entra -- e um e-mail, e
+        // poria endereco de terceiro na tela e na URL do filtro.
+        nome: c.alias ?? c.providerAccountId,
+      })),
       periodo: {
         preset: periodo.preset,
         rotulo: periodo.rotulo,

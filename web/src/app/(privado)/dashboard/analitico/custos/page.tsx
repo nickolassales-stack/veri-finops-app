@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 
+import { AnaliticoPorProvider } from "@/components/dashboard/analitico-por-provider";
 import { PainelHistorico } from "@/components/dashboard/painel-historico";
 import { CarregandoLinhas } from "@/components/ui/estado";
 import { podeAtual } from "@/lib/auth/autorizacao";
@@ -33,7 +34,10 @@ export default async function HistoricoDeCustosPage() {
   return (
     // `useSearchParams` no cliente exige fronteira de Suspense.
     <Suspense fallback={<CarregandoLinhas linhas={10} />}>
-      <PainelHistorico tz={tz} podeExportar={podeExportar} />
+      <AnaliticoPorProvider
+        aba="mensal"
+        aws={<PainelHistorico tz={tz} podeExportar={podeExportar} />}
+      />
     </Suspense>
   );
 }

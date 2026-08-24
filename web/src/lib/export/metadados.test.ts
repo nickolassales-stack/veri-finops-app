@@ -63,10 +63,10 @@ function valorDe(rotulo: string, ctx = contexto()): string {
 describe("nome do arquivo", () => {
   it("segue o padrao pedido, com as datas do periodo aplicado", () => {
     expect(nomeDoArquivo("2026-08-01", "2026-08-11", "csv")).toBe(
-      "veri-finops-2026-08-01_2026-08-11.csv",
+      "veri-finops-aws-2026-08-01_2026-08-11.csv",
     );
     expect(nomeDoArquivo("2026-08-01", "2026-08-11", "xlsx")).toBe(
-      "veri-finops-2026-08-01_2026-08-11.xlsx",
+      "veri-finops-aws-2026-08-01_2026-08-11.xlsx",
     );
   });
 });

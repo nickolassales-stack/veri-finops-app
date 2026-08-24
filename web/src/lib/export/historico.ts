@@ -175,7 +175,7 @@ export async function prepararExportacaoHistorico(
       tz: opcoes.tz,
     },
     nome: (extensao) =>
-      `veri-finops-historico-${opcoes.periodo.de}_${opcoes.periodo.ate}.${extensao}`,
+      `veri-finops-aws-historico-${opcoes.periodo.de}_${opcoes.periodo.ate}.${extensao}`,
   };
 }
 

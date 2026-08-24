@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 
+import { AnaliticoPorProvider } from "@/components/dashboard/analitico-por-provider";
 import { PainelAnalitico } from "@/components/dashboard/painel-analitico";
 import { CarregandoLinhas } from "@/components/ui/estado";
 import { getEnv } from "@/lib/env";
@@ -10,6 +11,9 @@ import { getEnv } from "@/lib/env";
  * Vive sob `(privado)`, cujo layout valida a sessao CONTRA O BANCO antes de
  * renderizar. Sem sessao, o usuario vai para
  * /login?next=%2Fdashboard%2Fanalitico e nao chega aqui.
+ *
+ * SERVE AS DUAS VISOES: `?provider=ovh` troca o painel inteiro pela visao OVH,
+ * decidido no cliente por `AnaliticoPorProvider` -- ver o cabecalho dele.
  *
  * Server Component fino: resolve o fuso e entrega o painel. Os dados vem do
  * endpoint protegido `/api/dashboard/analytic`, que pagina no banco -- nem esta
@@ -30,7 +34,7 @@ export default function AnaliticoPage() {
   return (
     // `useSearchParams` no cliente exige fronteira de Suspense.
     <Suspense fallback={<CarregandoLinhas linhas={10} />}>
-      <PainelAnalitico tz={tz} />
+      <AnaliticoPorProvider aba="servicos" aws={<PainelAnalitico tz={tz} />} />
     </Suspense>
   );
 }

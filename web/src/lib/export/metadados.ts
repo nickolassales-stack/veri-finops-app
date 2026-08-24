@@ -72,8 +72,19 @@ const ROTULOS_ORDENACAO: Record<string, string> = {
  * iguais tem o mesmo conteudo, e o nome nunca promete um periodo que o arquivo
  * nao contem.
  */
+/**
+ * Nome do arquivo do export AWS.
+ *
+ * O `aws` no meio foi acrescentado quando a Visao OVH ganhou export proprio.
+ * Sem ele, dois arquivos da mesma janela -- um de cada provedor -- ficam
+ * indistinguiveis na pasta de downloads, e soma-los numa planilha e um erro
+ * facil de cometer e dificil de perceber.
+ *
+ * MUDA O NOME DE ARQUIVOS BAIXADOS DAQUI PARA A FRENTE. Arquivos ja salvos nao
+ * sao afetados; automacao que dependa do nome antigo precisa ser ajustada.
+ */
 export function nomeDoArquivo(de: string, ate: string, extensao: "csv" | "xlsx"): string {
-  return `veri-finops-${de}_${ate}.${extensao}`;
+  return `veri-finops-aws-${de}_${ate}.${extensao}`;
 }
 
 export function descreverContas(contas: ContaSelecionada[]): string {

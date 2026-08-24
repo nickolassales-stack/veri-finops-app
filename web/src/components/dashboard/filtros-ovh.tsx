@@ -30,6 +30,7 @@ import type { PresetMes } from "@/lib/filtros/periodo-mensal";
 export function FiltrosOvhBarra({
   filtros,
   problema,
+  contas,
   projetos,
   fontesComDado,
   carregando,
@@ -38,6 +39,11 @@ export function FiltrosOvhBarra({
 }: {
   filtros: FiltrosOvh;
   problema: ProblemaFiltroOvh;
+  /**
+   * Contas OVH do cadastro. Vazio ou com UMA conta esconde o seletor: um
+   * dropdown de um item so ocupa espaco e sugere uma escolha que nao existe.
+   */
+  contas?: { id: string; nome: string }[];
   projetos: ProjetoDisponivel[];
   /** Origens que existem no banco. As outras aparecem marcadas como sem dado. */
   fontesComDado: FonteOvh[];
@@ -58,6 +64,13 @@ export function FiltrosOvhBarra({
             fontesComDado={fontesComDado}
             aoMudar={(source) => aoMudar({ source })}
           />
+          {(contas?.length ?? 0) > 1 && (
+            <FiltroConta
+              selecionada={filtros.conta}
+              contas={contas ?? []}
+              aoMudar={(conta) => aoMudar({ conta })}
+            />
+          )}
           <FiltroProjeto
             selecionado={filtros.projeto}
             projetos={projetos}
@@ -265,6 +278,50 @@ function FiltroOrigem({
 }
 
 /** Projeto OVH. `<select>` nativo: a lista e curta e o controle e conhecido. */
+/**
+ * Conta OVH.
+ *
+ * Aparece so com DUAS ou mais contas -- ver a prop `contas`. Hoje ha uma unica
+ * conta em producao, entao o seletor nao e renderizado; ele surge sozinho quando
+ * a segunda for cadastrada, sem mudanca de codigo.
+ */
+function FiltroConta({
+  selecionada,
+  contas,
+  aoMudar,
+}: {
+  selecionada: string;
+  contas: { id: string; nome: string }[];
+  aoMudar: (conta: string) => void;
+}) {
+  const id = useId();
+
+  return (
+    <div className="min-w-0">
+      <label
+        htmlFor={id}
+        className="block text-xs font-medium uppercase tracking-wide text-texto-suave"
+      >
+        Conta
+      </label>
+
+      <select
+        id={id}
+        value={selecionada}
+        onChange={(e) => aoMudar(e.target.value)}
+        className="mt-2 max-w-[16rem] rounded-lg border border-veri-verde-claro/50 bg-veri-branco px-3 py-1.5 text-sm text-veri-verde-escuro"
+      >
+        <option value="">Todas as contas OVH</option>
+        {contas.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.nome}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function FiltroProjeto({
   selecionado,
   projetos,
