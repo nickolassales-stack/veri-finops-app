@@ -266,39 +266,95 @@ class Execucao:
         self.conexao = None
         #: `True` quando o banco ainda nao tem a coluna da migracao 007.
         self.sem_coluna_conta = False
+        #: `True` quando `source` teve de ser rebaixado para 'manual' (migracao 009).
+        self.source_degradado = False
+
+    #: pgcodes que significam "o schema deste banco e mais antigo que este codigo".
+    #: Nos dois casos o certo e degradar, nao abortar: o collector novo tem de
+    #: rodar num banco que ainda nao migrou, senao a ordem de deploy passa a ser
+    #: obrigatoria e uma coleta se perde se alguem inverter os passos.
+    PGCODE_COLUNA_AUSENTE = "42703"   # migracao 007 nao rodou
+    PGCODE_CHECK = "23514"            # migracao 009 nao rodou
+
+    def _tentar_inserir(self, cur, com_conta: bool, source: str) -> int | None:
+        """
+        Uma tentativa de INSERT. Devolve o id, ou `None` se o schema recusou.
+
+        Recusa ESPERADA (coluna ausente, CHECK de source) devolve `None` para que
+        o chamador tente a variante seguinte. Qualquer outro erro sobe: um
+        problema real de banco nao deve ser confundido com schema antigo.
+        """
+        if com_conta:
+            sql = (
+                "INSERT INTO ovh_sync_runs "
+                "(started_at, status, source, log_path, provider_account_id) "
+                "VALUES (now(), 'running', %s, %s, %s) RETURNING id"
+            )
+            params = (source, self.log_path, self.provider_account_id)
+        else:
+            sql = (
+                "INSERT INTO ovh_sync_runs (started_at, status, source, log_path) "
+                "VALUES (now(), 'running', %s, %s) RETURNING id"
+            )
+            params = (source, self.log_path)
+
+        try:
+            cur.execute(sql, params)
+        except Exception as exc:
+            if getattr(exc, "pgcode", None) not in (
+                self.PGCODE_COLUNA_AUSENTE,
+                self.PGCODE_CHECK,
+            ):
+                raise
+            self.conexao.rollback()
+            return None
+        return cur.fetchone()[0]
 
     def abrir(self) -> None:
+        """
+        Registra o inicio em `ovh_sync_runs`, degradando conforme o schema.
+
+        Quatro variantes, da mais completa para a mais antiga. A ordem importa:
+        perder a COLUNA da conta e menos grave do que perder a LINHA inteira, e
+        perder a distincao de `source` e menos grave ainda.
+
+        O caso que motivou isto: o worker de fila gravava `source='job'` e o CHECK
+        da 009 nao existia. O collector avisava e seguia, e a coleta funcionava --
+        mas nao ficava registrada, e a tela continuava mostrando a falha do dia
+        anterior como ultima sincronizacao. Um sucesso invisivel.
+        """
         try:
             self.conexao = conectar_banco(self.cfg, autocommit=True)
             with self.conexao.cursor() as cur:
-                # Tenta com `provider_account_id`; sem a migracao 007 o Postgres
-                # devolve 42703 (undefined_column) e caimos na forma antiga.
-                #
-                # Degradar em vez de exigir a migracao e deliberado: o collector
-                # novo tem de rodar num banco que ainda nao migrou, senao a
-                # ordem de deploy passa a ser obrigatoria e uma coleta se perde
-                # se alguem inverter os passos.
-                try:
-                    cur.execute(
-                        "INSERT INTO ovh_sync_runs "
-                        "(started_at, status, source, log_path, provider_account_id) "
-                        "VALUES (now(), 'running', %s, %s, %s) RETURNING id",
-                        (self.source, self.log_path, self.provider_account_id),
-                    )
-                except Exception as exc:
-                    if getattr(exc, "pgcode", None) != "42703":
-                        raise
-                    self.sem_coluna_conta = True
-                    self.conexao.rollback()
-                    cur.execute(
-                        "INSERT INTO ovh_sync_runs (started_at, status, source, log_path) "
-                        "VALUES (now(), 'running', %s, %s) RETURNING id",
-                        (self.source, self.log_path),
-                    )
-                self.id = cur.fetchone()[0]
+                for com_conta, source in (
+                    (True, self.source),
+                    (True, "manual"),
+                    (False, self.source),
+                    (False, "manual"),
+                ):
+                    novo_id = self._tentar_inserir(cur, com_conta, source)
+                    if novo_id is None:
+                        continue
+                    self.id = novo_id
+                    self.sem_coluna_conta = not com_conta
+                    self.source_degradado = source != self.source
+                    break
+
+            if self.id is None:
+                log("aviso: nao foi possivel registrar inicio (schema recusou todas as formas)")
+                return
+
             conta = self.provider_account_id or "(sem conta)"
-            aviso = " [sem coluna de conta: rode a migracao 007]" if self.sem_coluna_conta else ""
-            log(f"execucao registrada: ovh_sync_runs.id={self.id} conta={conta}{aviso}")
+            avisos = []
+            if self.sem_coluna_conta:
+                avisos.append("sem coluna de conta: rode a migracao 007")
+            if self.source_degradado:
+                avisos.append(
+                    f"source '{self.source}' recusado, gravado como 'manual': "
+                    "rode a migracao 009"
+                )
+            sufixo = f" [{'; '.join(avisos)}]" if avisos else ""
+            log(f"execucao registrada: ovh_sync_runs.id={self.id} conta={conta}{sufixo}")
         except Exception as exc:
             # Monitoramento NUNCA derruba o que ele monitora.
             log(f"aviso: nao foi possivel registrar inicio ({sanitizar_erro(exc)})")
