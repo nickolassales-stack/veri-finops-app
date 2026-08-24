@@ -12,7 +12,11 @@ import { getEnv } from "@/lib/env";
 import { formatDataDia, formatDataHora, formatInteiro } from "@/lib/format";
 import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico";
 import { montarDiagnostico } from "@/lib/services/diagnostico";
-import { getEstadoColetaOvh } from "@/lib/services/credenciais-ovh";
+import { avaliarOrigemCredenciais } from "@/lib/diagnostico/credenciais-ovh";
+import {
+  getEstadoColetaOvh,
+  getOrigemCredenciaisOvh,
+} from "@/lib/services/credenciais-ovh";
 import { montarVisaoOvh } from "@/lib/services/ovh";
 
 /**
@@ -64,12 +68,16 @@ export default async function DiagnosticoPipelinePage() {
   // `getEstadoColetaOvh` nunca lanca por tabela ausente -- devolve
   // `disponivel: false`. Isso importa: a tela de diagnostico e justamente a que
   // NAO pode quebrar quando o ambiente esta pela metade.
-  const [d, ovh, ehAdmin, coleta] = await Promise.all([
+  const [d, ovh, ehAdmin, coleta, contasCredencial] = await Promise.all([
     montarDiagnostico({ limiteHistorico: 10 }),
     montarVisaoOvh(0),
     ehAdminAtual(),
     getEstadoColetaOvh(),
+    getOrigemCredenciaisOvh(),
   ]);
+
+  // A decisão de alertar mora num módulo puro, com teste. Aqui só se exibe.
+  const origem = avaliarOrigemCredenciais(contasCredencial);
 
   return (
     <div className="space-y-8">
@@ -92,6 +100,7 @@ export default async function DiagnosticoPipelinePage() {
       <PainelOvh
         ovh={ovh}
         tz={tz}
+        origem={origem}
         coleta={
           <BotaoColetaOvh
             ehAdmin={ehAdmin}

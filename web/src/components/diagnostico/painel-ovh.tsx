@@ -3,6 +3,10 @@ import type { ReactNode } from "react";
 import { Aviso } from "@/components/ui/aviso";
 import { Card } from "@/components/ui/card";
 import { SeloProvider } from "@/components/ui/selo-provider";
+import {
+  resumoOrigem,
+  type OrigemCredenciais,
+} from "@/lib/diagnostico/credenciais-ovh";
 import { formatDataHora, formatInteiro } from "@/lib/format";
 import type { VisaoOvh } from "@/lib/services/ovh";
 
@@ -23,9 +27,12 @@ export function PainelOvh({
   ovh,
   tz,
   coleta,
+  origem,
 }: {
   ovh: VisaoOvh;
   tz: string;
+  /** De onde cada conta OVH tira a credencial. Ausente = não avaliado. */
+  origem?: OrigemCredenciais;
   /**
    * O bloco de coleta manual. Recebido como `ReactNode` e nao construido aqui de
    * proposito: este componente e de SERVIDOR, o botao e de cliente, e montar o
@@ -46,6 +53,17 @@ export function PainelOvh({
             <p>{a.detalhe}</p>
           </Aviso>
         ))}
+
+        {/* Alertas de ORIGEM DE CREDENCIAL vêm antes do botão de coleta: pedir
+            uma coleta sem saber que a conta depende do arquivo é pedir a coleta
+            errada. */}
+        {origem?.alertas.map((a) => (
+          <Aviso key={a.chave} tom={a.tom} titulo={a.titulo}>
+            <p>{a.detalhe}</p>
+          </Aviso>
+        ))}
+
+        {origem && <OrigemDasCredenciais origem={origem} />}
 
         {coleta}
 
@@ -203,6 +221,58 @@ export function PainelOvh({
         </p>
       </div>
     </Card>
+  );
+}
+
+/**
+ * Uma linha por conta, dizendo de onde vem a credencial.
+ *
+ * Existe além do alerta porque o alerta só aparece quando há problema — e a
+ * pergunta "de onde vem a credencial desta conta?" é legítima também quando está
+ * tudo certo. Sem esta lista, confirmar que a migração terminou exigiria abrir o
+ * banco.
+ */
+function OrigemDasCredenciais({ origem }: { origem: OrigemCredenciais }) {
+  const contas = [...origem.noBanco, ...origem.emFallback].sort((a, b) =>
+    a.accountId.localeCompare(b.accountId),
+  );
+  if (contas.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-veri-offwhite bg-veri-offwhite/40 px-4 py-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-texto-suave">
+        Origem das credenciais OVH
+      </h3>
+
+      <ul className="mt-2 space-y-1 text-sm">
+        {contas.map((c) => (
+          <li key={c.accountId} className="flex flex-wrap items-baseline gap-2">
+            <span className="veri-numero font-medium text-veri-verde-escuro">
+              {c.accountId}
+            </span>
+            {c.temCredencial ? (
+              <span className="inline-flex items-center rounded-full border border-veri-verde/50 bg-veri-verde/12 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-veri-verde-escuro">
+                banco (cifrada)
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-full border border-veri-mostarda/50 bg-veri-mostarda/15 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-veri-verde-escuro">
+                fallback legado
+              </span>
+            )}
+            {c.status && (
+              <span className="text-xs text-texto-suave">status: {c.status}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <p className="mt-2 text-xs leading-relaxed text-texto-suave">
+        {resumoOrigem(origem)} O portal não lê o <span className="veri-numero">.env</span>{" "}
+        do servidor: “fallback legado” significa que a conta está ativa e{" "}
+        <strong>não tem</strong> credencial cadastrada — o collector usa o arquivo, ou
+        não coleta a conta.
+      </p>
+    </div>
   );
 }
 

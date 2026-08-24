@@ -14,6 +14,14 @@ feita pela tela seria silenciosamente ignorada porque alguem esqueceu de limpar 
 antiga, que e o pior desfecho possivel: parece certo e esta errado.
 
 ---------------------------------------------------------------------------
+STATUS DO FALLBACK EM 24/08/2026: INATIVO
+
+Nenhuma conta depende dele em producao. As origens 2 e 3 continuam implementadas
+como rede de seguranca da transicao, e estao marcadas para remocao -- checklist
+em docs/OPERACAO-FINOPS.md, secao 9. O Diagnostico do portal mostra a origem por
+conta, entao da para confirmar pela tela em vez de abrir o banco.
+
+---------------------------------------------------------------------------
 NOTA SOBRE accounts.d
 
 Este diretorio NUNCA EXISTIU neste repositorio. O fallback real, hoje em

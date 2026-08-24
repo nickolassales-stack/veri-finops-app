@@ -18,6 +18,7 @@ substituir nem alterar nenhum dos dois.
 | [docs/](docs/) | Runbook, schema real do banco, decisões de visualização, brandbook VERI |
 | [assets/logos/](assets/logos/) | Identidade visual VERI |
 
+- **[docs/OPERACAO-FINOPS.md](docs/OPERACAO-FINOPS.md)** — **o mapa de ponta a ponta**: Contas Cloud, adicionar AWS e OVH, credenciais cifradas, coleta manual e por cron, Diagnostico, Analitico, checklist de descomissionamento do fallback, checklist de seguranca verificado e o hardening pendente do Metabase
 - **[docs/ovh-collector-multiconta.md](docs/ovh-collector-multiconta.md)** — collector OVH lendo credenciais do banco: descoberta por conta, uniao banco+legado, coleta isolada, fila `cloud_sync_jobs`, worker, os tres cadeados, codigos de saida e plano de descomissionamento
 - **[docs/CONTAS-CLOUD.md](docs/CONTAS-CLOUD.md)** — Contas Cloud: cadastro multi-provedor, credenciais OVH cifradas, por que cifrado e não hash, rotação e o contrato de leitura do collector
 - **[docs/RUNBOOK-app.md](docs/RUNBOOK-app.md)** — deploy detalhado, role do banco, riscos

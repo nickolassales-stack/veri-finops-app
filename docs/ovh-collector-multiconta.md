@@ -569,6 +569,18 @@ diagnóstico é justamente a que não pode quebrar quando o ambiente está pela 
 
 ## 12. Plano para descomissionar o fallback
 
+> **Status em 24/08/2026 (`a607661`): fallback INATIVO.** Nenhuma conta depende
+> dele — `ovh-main-ca` usa credencial do banco, status `conectado`, e
+> `accounts.d/` não existe em produção. O que resta são as chaves `OVH_*` ainda
+> presentes em `/opt/finops/ovh-collector/.env`, inertes enquanto houver
+> credencial no banco.
+>
+> O checklist executável está em
+> [OPERACAO-FINOPS.md §9](OPERACAO-FINOPS.md#9-fallback-legado-accountsd). O
+> Diagnóstico agora mostra a origem por conta, então dá para confirmar pela tela
+> em vez de abrir o banco.
+
+
 O fallback **não sai nesta release**, por decisão explícita. A ordem sugerida:
 
 | Etapa | O que fazer | Como confirmar |

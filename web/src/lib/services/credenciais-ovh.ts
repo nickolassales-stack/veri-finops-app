@@ -41,6 +41,7 @@ import {
   type StatusCredencial,
 } from "@/lib/queries/admin/credenciais";
 import { listarContasAdministraveis, type ContaAdministravel } from "@/lib/queries/admin/contas";
+import type { ContaCredencial } from "@/lib/diagnostico/credenciais-ovh";
 
 /**
  * Servicos de credencial OVH -- a camada que cifra, decifra e decide.
@@ -706,4 +707,48 @@ export async function getEstadoColetaOvh(): Promise<{
   );
 
   return { disponivel: true, contas: linhas };
+}
+
+
+/**
+ * De onde cada conta OVH ativa tira a credencial — para o Diagnóstico.
+ *
+ * NÃO depende da fila (`cloud_sync_jobs`), ao contrário de `getEstadoColetaOvh`:
+ * origem de credencial e fila de coleta são perguntas independentes, e amarrá-las
+ * faria o indicador de fallback sumir num ambiente onde a migração 008 não rodou
+ * — justamente um ambiente atrasado, onde o fallback é mais provável.
+ *
+ * Devolve lista vazia, e não exceção, quando a tabela de credenciais não existe:
+ * a tela de diagnóstico é a que não pode quebrar com o ambiente pela metade.
+ */
+export async function getOrigemCredenciaisOvh(): Promise<ContaCredencial[]> {
+  const contas = (await listarContasAdministraveis()).filter(
+    (c) => c.provider === PROVIDER && c.ativa,
+  );
+  if (contas.length === 0) return [];
+
+  if (!(await credenciaisDisponiveis())) {
+    // Sem a migração 006 nenhuma conta tem credencial no banco — todas dependem
+    // do fallback, e é isso que o Diagnóstico precisa dizer.
+    return contas.map((c) => ({
+      accountId: c.accountId,
+      nome: c.nomeExibicao,
+      temCredencial: false,
+      status: null,
+    }));
+  }
+
+  return Promise.all(
+    contas.map(async (c) => {
+      const envelope = await getCredencialEnvelope(c.accountId);
+      return {
+        accountId: c.accountId,
+        nome: c.nomeExibicao,
+        temCredencial: envelope !== null,
+        // Só o STATUS sai daqui. Nenhum campo `*_encrypted`, nenhum fingerprint:
+        // esta função alimenta uma tela de diagnóstico, não o formulário.
+        status: envelope?.status ?? null,
+      };
+    }),
+  );
 }
