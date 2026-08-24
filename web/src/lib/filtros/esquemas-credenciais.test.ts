@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  esquemaColetaOvh,
   esquemaCredencialOvh,
   esquemaEnfileirarColeta,
 } from "./esquemas-credenciais";
@@ -34,6 +35,43 @@ describe("esquemaEnfileirarColeta", () => {
       esquemaEnfileirarColeta.safeParse({ action: "first_sync", status: "success" })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("esquemaColetaOvh", () => {
+  it("aceita scope all sem mais nada", () => {
+    expect(esquemaColetaOvh.safeParse({ scope: "all" }).success).toBe(true);
+  });
+
+  it("aceita scope account com accountId", () => {
+    const r = esquemaColetaOvh.safeParse({ scope: "account", accountId: "ovh-main-ca" });
+    expect(r.success).toBe(true);
+  });
+
+  it("recusa scope all COM accountId", () => {
+    // O ponto da uniao discriminada: um payload que diz duas coisas
+    // contraditorias e erro do cliente, nao ambiguidade a resolver no servidor.
+    expect(
+      esquemaColetaOvh.safeParse({ scope: "all", accountId: "ovh-main-ca" }).success,
+    ).toBe(false);
+  });
+
+  it("recusa scope account SEM accountId", () => {
+    expect(esquemaColetaOvh.safeParse({ scope: "account" }).success).toBe(false);
+  });
+
+  it("recusa scope desconhecido", () => {
+    expect(esquemaColetaOvh.safeParse({ scope: "todas" }).success).toBe(false);
+    expect(esquemaColetaOvh.safeParse({}).success).toBe(false);
+  });
+
+  it("recusa accountId com caractere fora do permitido", () => {
+    for (const ruim of ["ovh main", "ovh/main", "'; DROP TABLE--", "a".repeat(21), ""]) {
+      expect(
+        esquemaColetaOvh.safeParse({ scope: "account", accountId: ruim }).success,
+        ruim,
+      ).toBe(false);
+    }
   });
 });
 
@@ -81,10 +119,15 @@ describe("esquemaCredencialOvh: campo vazio significa manter", () => {
 describe("rotas de credencial usam rotaSomenteAdmin", () => {
   const RAIZ = join(__dirname, "..", "..", "app", "api", "admin", "accounts", "[accountId]");
 
+  const API = join(__dirname, "..", "..", "app", "api");
+
   const ROTAS = [
     join(RAIZ, "credentials", "route.ts"),
     join(RAIZ, "credentials", "test", "route.ts"),
     join(RAIZ, "credentials", "sync", "route.ts"),
+    // Disparar coleta e ADMIN, e nao `diagnostics:view`: ver o painel e uma
+    // coisa, disparar trabalho contra a API de um provedor e outra.
+    join(API, "diagnostico", "ovh", "collect", "route.ts"),
   ];
 
   for (const caminho of ROTAS) {

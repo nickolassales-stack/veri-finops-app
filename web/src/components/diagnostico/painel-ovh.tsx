@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { Aviso } from "@/components/ui/aviso";
 import { Card } from "@/components/ui/card";
 import { SeloProvider } from "@/components/ui/selo-provider";
@@ -17,7 +19,21 @@ import type { VisaoOvh } from "@/lib/services/ovh";
  * Ainda assim ela aparece dentro de um bloco de largura limitada e truncada em
  * 500 caracteres pela query -- um stack inteiro na tela nao ajuda ninguem.
  */
-export function PainelOvh({ ovh, tz }: { ovh: VisaoOvh; tz: string }) {
+export function PainelOvh({
+  ovh,
+  tz,
+  coleta,
+}: {
+  ovh: VisaoOvh;
+  tz: string;
+  /**
+   * O bloco de coleta manual. Recebido como `ReactNode` e nao construido aqui de
+   * proposito: este componente e de SERVIDOR, o botao e de cliente, e montar o
+   * cliente aqui dentro arrastaria a fronteira para um arquivo que hoje so
+   * formata numero.
+   */
+  coleta?: ReactNode;
+}) {
   return (
     <Card
       titulo="OVH Collector"
@@ -30,6 +46,8 @@ export function PainelOvh({ ovh, tz }: { ovh: VisaoOvh; tz: string }) {
             <p>{a.detalhe}</p>
           </Aviso>
         ))}
+
+        {coleta}
 
         {/* `erro_de_leitura` some com o bloco de metricas: elas viriam todas
             "—", e uma grade de travessoes ao lado de um alerta vermelho sugere

@@ -477,6 +477,7 @@ Todos exigem sessão. Os três de credencial exigem **papel ADMIN**.
 | POST | `/api/admin/accounts/:id/credentials/test` | ADMIN |
 | POST | `/api/admin/accounts/:id/credentials/sync` | ADMIN — enfileira coleta |
 | GET | `/api/admin/accounts/:id/credentials/sync` | ADMIN — job vivo + último |
+| POST | `/api/diagnostico/ovh/collect` | ADMIN — coleta manual pelo Diagnóstico |
 
 `PUT` e não `PATCH` porque as três partes e o endpoint formam uma **unidade**:
 trocar a application key mantendo o secret antigo não produz credencial

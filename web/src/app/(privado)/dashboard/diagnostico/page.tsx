@@ -1,16 +1,18 @@
 import { ListaAlertas } from "@/components/diagnostico/lista-alertas";
 import { PainelEtl } from "@/components/diagnostico/painel-etl";
+import { BotaoColetaOvh } from "@/components/diagnostico/botao-coleta-ovh";
 import { PainelOvh } from "@/components/diagnostico/painel-ovh";
 import { SeloSituacao } from "@/components/diagnostico/selo-situacao";
 import { TabelaFrescor } from "@/components/diagnostico/tabela-frescor";
 import { Aviso } from "@/components/ui/aviso";
 import { Card } from "@/components/ui/card";
-import { requirePermissao } from "@/lib/auth/autorizacao";
+import { ehAdminAtual, requirePermissao } from "@/lib/auth/autorizacao";
 import { checkDbHealth } from "@/lib/database";
 import { getEnv } from "@/lib/env";
 import { formatDataDia, formatDataHora, formatInteiro } from "@/lib/format";
 import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico";
 import { montarDiagnostico } from "@/lib/services/diagnostico";
+import { getEstadoColetaOvh } from "@/lib/services/credenciais-ovh";
 import { montarVisaoOvh } from "@/lib/services/ovh";
 
 /**
@@ -59,9 +61,14 @@ export default async function DiagnosticoPipelinePage() {
 
   // Dois pipelines independentes, duas montagens independentes. A tabela mensal
   // da OVH nao interessa aqui, so o historico de execucoes -- por isso o limite 0.
-  const [d, ovh] = await Promise.all([
+  // `getEstadoColetaOvh` nunca lanca por tabela ausente -- devolve
+  // `disponivel: false`. Isso importa: a tela de diagnostico e justamente a que
+  // NAO pode quebrar quando o ambiente esta pela metade.
+  const [d, ovh, ehAdmin, coleta] = await Promise.all([
     montarDiagnostico({ limiteHistorico: 10 }),
     montarVisaoOvh(0),
+    ehAdminAtual(),
+    getEstadoColetaOvh(),
   ]);
 
   return (
@@ -82,7 +89,24 @@ export default async function DiagnosticoPipelinePage() {
           ETL AWS existe, e o collector OVH nao depende dele. Amarrar os dois
           esconderia o estado da OVH justamente quando o pipeline AWS esta pela
           metade -- o momento em que saber o que ainda funciona importa mais. */}
-      <PainelOvh ovh={ovh} tz={tz} />
+      <PainelOvh
+        ovh={ovh}
+        tz={tz}
+        coleta={
+          <BotaoColetaOvh
+            ehAdmin={ehAdmin}
+            disponivel={coleta.disponivel}
+            contas={coleta.contas.map((c) => ({
+              accountId: c.accountId,
+              nome: c.nome,
+              temCredencial: c.temCredencial,
+              jobAtivo: c.jobAtivo
+                ? { id: c.jobAtivo.id, status: c.jobAtivo.status }
+                : null,
+            }))}
+          />
+        }
+      />
 
       {d.instalado ? (
         <>

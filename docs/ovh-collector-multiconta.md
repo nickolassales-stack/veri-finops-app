@@ -484,7 +484,90 @@ o cadastro.
 
 ---
 
-## 11. Plano para descomissionar o fallback
+## 11. O botão "Executar coleta OVH agora"
+
+Fica no bloco *OVH Collector* de `/dashboard/diagnostico`. Enfileira na mesma fila
+da seção 10 — a diferença é só o escopo e o contexto de uso.
+
+### Quando usar cada coisa
+
+| | Quando | O que faz |
+|---|---|---|
+| **Cron diário** (09:00 UTC) | sempre | todas as contas ativas |
+| **Botão no Diagnóstico** | investigando: o número não bateu, a credencial acabou de ser trocada, a coleta de ontem falhou | enfileira todas ou uma |
+| **Botão em Contas Cloud** | acabou de cadastrar a credencial daquela conta | enfileira aquela conta |
+| **CLI na EC2** | o worker está parado, ou você quer o log na hora | executa direto, ignora a fila |
+
+O botão **não substitui o cron** e não deve virar rotina: coletar de hora em hora
+não traz dado novo — a OVH consolida a fatura ao longo do dia, e a janela de
+faturas é a mesma. Ele existe para quando você precisa do dado *agora* e não pode
+esperar até amanhã.
+
+### O que ele faz, exatamente
+
+`POST /api/diagnostico/ovh/collect` com `{"scope":"all"}` ou
+`{"scope":"account","accountId":"..."}` → uma linha em `cloud_sync_jobs` por conta
+→ o worker atende no minuto seguinte.
+
+**Não executa shell.** O container do portal não alcança o venv do collector, e
+executar comando a partir de rota HTTP transformaria a tela de diagnóstico em
+superfície de execução. Por isso o texto na tela diz *enfileirada*, nunca
+*executada*.
+
+### Falha parcial não é falha
+
+Com três contas e uma sem credencial, o endpoint enfileira as duas e **relata** a
+terceira em `ignoradas`, devolvendo 200. Recusar as três faria uma conta mal
+configurada bloquear a coleta das que estão corretas — o oposto do isolamento por
+conta que o collector implementa.
+
+O botão só fica desabilitado quando **nada** no escopo pode ser enfileirado: todas
+já coletando, ou todas sem credencial. Com "Todas" e uma de três em andamento, as
+outras duas ainda vão.
+
+### Quem pode
+
+**Somente ADMIN**, por papel — não por `diagnostics:view`. Ver o painel é uma
+coisa; disparar trabalho contra a API de um provedor é outra. Quem tem
+`diagnostics:view` e não é ADMIN vê o painel e, no lugar do botão, a explicação.
+
+Esconder o botão não é a proteção: a rota é. Um VIEWER que monte a requisição à
+mão recebe 403.
+
+### Troubleshooting
+
+**O job fica `queued` e não sai.** O worker não está rodando. Confira o cron e
+rode à mão:
+
+```bash
+crontab -l | grep cloud-sync-jobs        # esperado: uma linha "* * * * *"
+cd /opt/finops/ovh-collector && ./run-cloud-sync-jobs.sh
+tail -20 logs/jobs.log
+```
+
+**O job fica `running` e não conclui.** O worker morreu no meio. `reabrir_orfaos`
+devolve para a fila o que está `running` há mais de 30 min, na execução seguinte
+do worker. Para não esperar:
+
+```sql
+SELECT id, account_id, status, started_at, attempts FROM cloud_sync_jobs
+ WHERE status IN ('queued','running');
+```
+
+**O botão está desabilitado.** Uma das três: já há coleta em andamento para todo o
+escopo, nenhuma conta do escopo tem credencial, ou a migração 008 não foi aplicada
+— a tela diz qual.
+
+**"Já existe uma coleta em andamento" e não há.** Job preso em `running` (acima). O
+índice único parcial impede novo job enquanto o antigo vive, por desenho.
+
+**A página não quebra com o worker parado.** `getEstadoColetaOvh` devolve
+`disponivel: false` em vez de lançar quando a tabela não existe — a tela de
+diagnóstico é justamente a que não pode quebrar quando o ambiente está pela metade.
+
+---
+
+## 12. Plano para descomissionar o fallback
 
 O fallback **não sai nesta release**, por decisão explícita. A ordem sugerida:
 
@@ -509,7 +592,7 @@ são apenas as chaves `OVH_*`.
 
 ---
 
-## 12. Limitações conhecidas
+## 13. Limitações conhecidas
 
 1. **O painel do portal ainda lê a "última execução" sem agregar por conta.** Com
    várias contas, a última pode ser a falha de uma enquanto as outras foram bem, e

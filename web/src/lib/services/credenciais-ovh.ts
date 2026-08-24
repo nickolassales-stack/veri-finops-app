@@ -15,7 +15,10 @@ import {
   planejarGravacao,
   type PlanoCredencial,
 } from "@/lib/credenciais/plano";
-import type { EntradaCredencialOvh } from "@/lib/filtros/esquemas-credenciais";
+import type {
+  EntradaColetaOvh,
+  EntradaCredencialOvh,
+} from "@/lib/filtros/esquemas-credenciais";
 import { ehEndpointOvh, type EndpointOvh } from "@/lib/ovh/endpoints";
 import { sanitizar, validarCredencialOvh } from "@/lib/ovh/api";
 import {
@@ -566,4 +569,141 @@ export async function getOvhSyncJobStatus(
     ultimoJobDaConta(accountId),
   ]);
   return { ativo, ultimo, disponivel: true };
+}
+
+
+// ================================================ coleta pedida pelo Diagnostico
+
+export type ResultadoColetaOvh = {
+  /** Um por conta atendida. Vazio nunca -- sem contas, a funcao lanca. */
+  jobs: { accountId: string; jobId: string; criado: boolean }[];
+  /** Contas puladas e o porque, sem segredo. Ex.: sem credencial cadastrada. */
+  ignoradas: { accountId: string; motivo: string }[];
+};
+
+/**
+ * Enfileira coleta para uma conta OVH ou para todas.
+ *
+ * ---------------------------------------------------------------------------
+ * FALHA PARCIAL NAO E FALHA
+ *
+ * Com `scope: "all"` e tres contas em que uma nao tem credencial, a resposta certa
+ * e enfileirar as duas e RELATAR a terceira -- nao recusar as tres. Recusar tudo
+ * faria uma conta mal configurada bloquear a coleta das que estao corretas, que e
+ * exatamente o oposto do isolamento por conta que o collector implementa.
+ *
+ * Por isso `ignoradas` vem junto de `jobs`: a tela precisa dizer "2 enfileiradas,
+ * 1 ignorada" em vez de "sucesso" ou "erro".
+ *
+ * A funcao so LANCA quando nao ha nada a fazer -- nenhuma conta OVH ativa, ou
+ * nenhuma delas enfileiravel. Um "sucesso" que nao enfileirou nada faria alguem
+ * esperar por uma coleta que nunca vai acontecer.
+ */
+export async function enfileirarColetaOvh(
+  entrada: EntradaColetaOvh,
+  usuarioId: string,
+): Promise<ResultadoColetaOvh> {
+  if (!(await filaDisponivel())) {
+    throw new ErroDeApi(
+      "banco-indisponivel",
+      "A fila de coleta ainda nao existe neste ambiente. Rode " +
+        "scripts/migrations/008-cloud-sync-jobs.sql.",
+    );
+  }
+
+  const contas = await listarContasAdministraveis();
+
+  const alvos =
+    entrada.scope === "account"
+      ? contas.filter((c) => c.accountId === entrada.accountId)
+      : contas.filter((c) => c.provider === PROVIDER && c.ativa);
+
+  if (entrada.scope === "account") {
+    // Conta inexistente e conta de outro provider sao erros DIFERENTES, e a
+    // mensagem precisa distinguir: "nao encontrei" manda procurar o id certo,
+    // "e AWS" manda parar de procurar.
+    if (alvos.length === 0) {
+      throw new ErroDeApi("nao-encontrado", "Conta nao encontrada no cadastro.");
+    }
+    const recusa = motivoRecusaDeProvider(entrada.accountId, alvos[0].provider);
+    if (recusa !== null) throw new ErroDeApi("parametros-invalidos", recusa);
+    if (!alvos[0].ativa) {
+      throw new ErroDeApi(
+        "parametros-invalidos",
+        "Conta desativada em cloud_accounts. Reative antes de pedir coleta -- o " +
+          "collector tambem a ignoraria.",
+      );
+    }
+  }
+
+  if (alvos.length === 0) {
+    throw new ErroDeApi(
+      "nao-encontrado",
+      "Nenhuma conta OVH ativa encontrada em cloud_accounts.",
+    );
+  }
+
+  const jobs: ResultadoColetaOvh["jobs"] = [];
+  const ignoradas: ResultadoColetaOvh["ignoradas"] = [];
+
+  for (const conta of alvos) {
+    // Enfileirar sem credencial criaria um job destinado a falhar, e a tela
+    // mostraria "coleta enfileirada" seguida de erro minutos depois.
+    const credencial = await getCredencialEnvelope(conta.accountId);
+    if (credencial === null) {
+      ignoradas.push({
+        accountId: conta.accountId,
+        motivo: "sem credencial cadastrada em Contas Cloud",
+      });
+      continue;
+    }
+
+    try {
+      const { job, criado } = await enfileirarColeta(
+        conta.accountId,
+        "manual_sync",
+        usuarioId,
+      );
+      jobs.push({ accountId: conta.accountId, jobId: job.id, criado });
+    } catch (e) {
+      // Uma conta que falhou ao enfileirar nao pode derrubar as outras.
+      ignoradas.push({
+        accountId: conta.accountId,
+        motivo: sanitizar(e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
+
+  if (jobs.length === 0) {
+    throw new ErroDeApi(
+      "parametros-invalidos",
+      "Nenhuma conta pode ser enfileirada. " +
+        ignoradas.map((i) => `${i.accountId}: ${i.motivo}`).join("; "),
+    );
+  }
+
+  return { jobs, ignoradas };
+}
+
+/** Estado da fila para a tela de Diagnostico: um resumo por conta OVH ativa. */
+export async function getEstadoColetaOvh(): Promise<{
+  disponivel: boolean;
+  contas: { accountId: string; nome: string; temCredencial: boolean; jobAtivo: JobSync | null }[];
+}> {
+  if (!(await filaDisponivel())) return { disponivel: false, contas: [] };
+
+  const contas = (await listarContasAdministraveis()).filter(
+    (c) => c.provider === PROVIDER && c.ativa,
+  );
+
+  const linhas = await Promise.all(
+    contas.map(async (c) => ({
+      accountId: c.accountId,
+      nome: c.nomeExibicao,
+      temCredencial: (await getCredencialEnvelope(c.accountId)) !== null,
+      jobAtivo: await jobAtivoDaConta(c.accountId),
+    })),
+  );
+
+  return { disponivel: true, contas: linhas };
 }

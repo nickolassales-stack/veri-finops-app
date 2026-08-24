@@ -107,3 +107,25 @@ export const esquemaEnfileirarColeta = z
   .strict();
 
 export type EntradaEnfileirarColeta = z.output<typeof esquemaEnfileirarColeta>;
+
+/**
+ * Escopo da coleta pedida pela tela de Diagnóstico.
+ *
+ * União DISCRIMINADA, e não `{ scope, accountId? }` com validação depois: assim
+ * `scope: "all"` com `accountId` junto é recusado pelo próprio esquema, em vez de
+ * passar e deixar o servidor decidir qual dos dois obedecer. Um payload que diz
+ * duas coisas contraditórias é erro do cliente, não ambiguidade a resolver.
+ *
+ * O `account_id` é revalidado no servidor contra `cloud_accounts` — este regex só
+ * garante que a string é plausível, nunca que a conta existe ou que é OVH.
+ */
+const idDeConta = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{1,20}$/, "Identificador de conta invalido");
+
+export const esquemaColetaOvh = z.discriminatedUnion("scope", [
+  z.object({ scope: z.literal("all") }).strict(),
+  z.object({ scope: z.literal("account"), accountId: idDeConta }).strict(),
+]);
+
+export type EntradaColetaOvh = z.output<typeof esquemaColetaOvh>;
