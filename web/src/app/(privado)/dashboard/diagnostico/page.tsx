@@ -13,6 +13,11 @@ import { formatDataDia, formatDataHora, formatInteiro } from "@/lib/format";
 import { listarPrivilegiosDoApp, listarTabelas } from "@/lib/queries/diagnostico";
 import { montarDiagnostico } from "@/lib/services/diagnostico";
 import { avaliarOrigemCredenciais } from "@/lib/diagnostico/credenciais-ovh";
+import { avaliarFilaParada } from "@/lib/diagnostico/fila-coleta";
+import { tentarSecao, type Secao } from "@/lib/diagnostico/resiliencia";
+import { SecaoIndisponivel } from "@/components/diagnostico/secao-indisponivel";
+import { cifragemDisponivel } from "@/lib/cripto/segredos";
+import type { AlertaOvh } from "@/lib/diagnostico/ovh";
 import {
   getEstadoColetaOvh,
   getOrigemCredenciaisOvh,
@@ -65,33 +70,89 @@ export default async function DiagnosticoPipelinePage() {
 
   // Dois pipelines independentes, duas montagens independentes. A tabela mensal
   // da OVH nao interessa aqui, so o historico de execucoes -- por isso o limite 0.
-  // `getEstadoColetaOvh` nunca lanca por tabela ausente -- devolve
-  // `disponivel: false`. Isso importa: a tela de diagnostico e justamente a que
-  // NAO pode quebrar quando o ambiente esta pela metade.
+  //
+  // CADA CARREGAMENTO E ISOLADO. Antes desta correcao era um `Promise.all` de
+  // promessas cruas, e `Promise.all` REJEITA INTEIRO quando qualquer uma rejeita:
+  // uma consulta que devolveu zero linhas em `cloud_sync_jobs` -- a fila em
+  // repouso, o estado NORMAL dela -- apagou da tela o ETL AWS, o frescor por
+  // conta e os privilegios do banco. `tentarSecao` nunca rejeita, entao o
+  // `Promise.all` aqui nao tem mais como falhar.
+  //
+  // `ehAdmin` fica de fora: e permissao, nao dado. Se a sessao nao puder ser
+  // lida, o certo e nao desenhar o botao -- e `false` e esse padrao seguro.
   const [d, ovh, ehAdmin, coleta, contasCredencial] = await Promise.all([
-    montarDiagnostico({ limiteHistorico: 10 }),
-    montarVisaoOvh(0),
-    ehAdminAtual(),
-    getEstadoColetaOvh(),
-    getOrigemCredenciaisOvh(),
+    tentarSecao("etl-aws", () => montarDiagnostico({ limiteHistorico: 10 })),
+    tentarSecao("ovh-execucoes", () => montarVisaoOvh(0)),
+    tentarSecao("sessao-admin", () => ehAdminAtual()),
+    tentarSecao("fila-coleta", () => getEstadoColetaOvh()),
+    tentarSecao("origem-credenciais", () => getOrigemCredenciaisOvh()),
   ]);
 
   // A decisão de alertar mora num módulo puro, com teste. Aqui só se exibe.
-  const origem = avaliarOrigemCredenciais(contasCredencial);
+  const origem: Secao<ReturnType<typeof avaliarOrigemCredenciais>> =
+    contasCredencial.ok
+      ? { ok: true, valor: avaliarOrigemCredenciais(contasCredencial.valor) }
+      : contasCredencial;
+
+  const estadoColeta = coleta.ok ? coleta.valor : { disponivel: false, contas: [] };
+
+  const alertasExtra: AlertaOvh[] = [];
+
+  // Fila parada: o portal nao le o crontab do host, mas ve o sintoma -- job em
+  // `queued` que envelhece e job que ninguem pegou.
+  const filaParada = avaliarFilaParada(
+    estadoColeta.contas.flatMap((c) =>
+      c.jobAtivo
+        ? [{
+            accountId: c.accountId,
+            status: c.jobAtivo.status,
+            requestedAt: c.jobAtivo.requestedAt,
+          }]
+        : [],
+    ),
+    new Date(),
+  );
+  if (filaParada) alertasExtra.push(filaParada);
+
+  // Cifragem ausente entra COMO ALERTA DESTE BLOCO, e nao como falha da pagina:
+  // sem a chave o portal nao decifra credencial, mas o ETL AWS, o frescor e a
+  // estrutura do banco continuam validos e sao justamente o que se veio ver.
+  if (!cifragemDisponivel()) {
+    alertasExtra.push({
+      chave: "cifragem-indisponivel",
+      tom: "critico",
+      titulo: "APP_CREDENTIALS_ENCRYPTION_KEY não está configurada neste ambiente",
+      detalhe:
+        "Sem essa variável o portal não cifra nem decifra credencial: salvar uma " +
+        "credencial em Contas Cloud falha, e as já salvas não podem ser lidas. " +
+        "A coleta pelo collector segue funcionando se ele tiver a própria chave. " +
+        "A variável fica no .env do servidor e precisa ser guardada no backup " +
+        "junto dele — sem ela, o que já está cifrado no banco é irrecuperável.",
+    });
+  }
+
+  // Alerta de coleta e alerta de credencial nao se misturam: quando a fila nao
+  // existe (migracao 008 nao aplicada), o botao some, mas a origem das
+  // credenciais continua sendo apurada.
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <Cabecalho />
-        <div className="flex flex-col items-end gap-1">
-          <SeloSituacao situacao={d.situacao} tamanho="grande" />
-          <span className="text-xs text-texto-suave">
-            verificado em {formatDataHora(d.agora, tz)}
-          </span>
-        </div>
+        {/* O selo resume o ETL AWS. Sem ele, nao se inventa um: um selo verde
+            desenhado sobre uma leitura que falhou seria a mentira mais cara
+            desta tela. */}
+        {d.ok && (
+          <div className="flex flex-col items-end gap-1">
+            <SeloSituacao situacao={d.valor.situacao} tamanho="grande" />
+            <span className="text-xs text-texto-suave">
+              verificado em {formatDataHora(d.valor.agora, tz)}
+            </span>
+          </div>
+        )}
       </div>
 
-      <ListaAlertas alertas={d.alertas} />
+      <ListaAlertas alertas={d.ok ? d.valor.alertas : []} />
 
       {/* FORA do ramo `d.instalado`: aquele booleano diz se o monitoramento do
           ETL AWS existe, e o collector OVH nao depende dele. Amarrar os dois
@@ -101,11 +162,12 @@ export default async function DiagnosticoPipelinePage() {
         ovh={ovh}
         tz={tz}
         origem={origem}
+        alertasExtra={alertasExtra}
         coleta={
           <BotaoColetaOvh
-            ehAdmin={ehAdmin}
-            disponivel={coleta.disponivel}
-            contas={coleta.contas.map((c) => ({
+            ehAdmin={ehAdmin.ok && ehAdmin.valor}
+            disponivel={estadoColeta.disponivel}
+            contas={estadoColeta.contas.map((c) => ({
               accountId: c.accountId,
               nome: c.nome,
               temCredencial: c.temCredencial,
@@ -117,37 +179,50 @@ export default async function DiagnosticoPipelinePage() {
         }
       />
 
-      {d.instalado ? (
+      {!d.ok && (
+        <SecaoIndisponivel
+          titulo="Carga do ETL AWS"
+          erro={d.erro}
+          consequencia={
+            "Não foi possível ler o monitoramento da carga AWS. Ficam de fora desta " +
+            "tela: situação da última execução, alertas do pipeline, frescor por " +
+            "conta e cobertura do dado. Isto não interrompe a carga — o ETL roda na " +
+            "EC2 e não depende do portal."
+          }
+        />
+      )}
+
+      {d.ok && d.valor.instalado ? (
         <>
-          <PainelEtl d={d} tz={tz} />
+          <PainelEtl d={d.valor} tz={tz} />
 
           <TabelaFrescor
-            contas={d.contas}
+            contas={d.valor.contas}
             tz={tz}
-            diasSemAtualizacao={d.limites.diasSemAtualizacao}
+            diasSemAtualizacao={d.valor.limites.diasSemAtualizacao}
           />
 
-          {d.cobertura && (
+          {d.valor.cobertura && (
             <Card
               titulo="Cobertura do dado"
               descricao="O que existe hoje no PostgreSQL, somando todas as contas."
             >
               <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Indicador rotulo="Contas com dado" valor={formatInteiro(d.cobertura.contas)} />
+                <Indicador rotulo="Contas com dado" valor={formatInteiro(d.valor.cobertura.contas)} />
                 <Indicador
                   rotulo="Linhas de custo"
-                  valor={formatInteiro(d.cobertura.totalLinhas)}
+                  valor={formatInteiro(d.valor.cobertura.totalLinhas)}
                 />
                 <Indicador
                   rotulo="Meses de cobrança"
-                  valor={formatInteiro(d.cobertura.mesesDisponiveis.length)}
-                  detalhe={d.cobertura.mesesDisponiveis.join(", ") || undefined}
+                  valor={formatInteiro(d.valor.cobertura.mesesDisponiveis.length)}
+                  detalhe={d.valor.cobertura.mesesDisponiveis.join(", ") || undefined}
                 />
                 <Indicador
                   rotulo="Datas de uso"
                   valor={
-                    d.cobertura.primeiraUsageDate && d.cobertura.ultimaUsageDate
-                      ? `${formatDataDia(d.cobertura.primeiraUsageDate)} a ${formatDataDia(d.cobertura.ultimaUsageDate)}`
+                    d.valor.cobertura.primeiraUsageDate && d.valor.cobertura.ultimaUsageDate
+                      ? `${formatDataDia(d.valor.cobertura.primeiraUsageDate)} a ${formatDataDia(d.valor.cobertura.ultimaUsageDate)}`
                       : "—"
                   }
                 />
@@ -157,7 +232,10 @@ export default async function DiagnosticoPipelinePage() {
         </>
       ) : null}
 
-      <Troubleshooting agenda={d.agenda.horario} fuso={d.agenda.fuso} />
+      {/* SEMPRE presente, inclusive quando a leitura do ETL falhou. E a secao
+          que diz o que fazer -- exatamente o que se procura quando algo acima
+          esta vermelho, e o pior momento para escondê-la. */}
+      <Troubleshooting agenda={d.ok ? d.valor.agenda : null} />
 
       <EstruturaDoBanco db={db} />
     </div>
@@ -203,7 +281,12 @@ function Indicador({
  * as 9h de um dia em que o numero nao bateu nao vai procurar documentacao --
  * vai procurar o proximo passo.
  */
-function Troubleshooting({ agenda, fuso }: { agenda: string; fuso: string }) {
+function Troubleshooting({
+  agenda,
+}: {
+  /** `null` quando a leitura do monitoramento falhou. */
+  agenda: { horario: string; fuso: string } | null;
+}) {
   return (
     <Card
       titulo="O que fazer quando algo aqui está vermelho"
@@ -232,11 +315,19 @@ function Troubleshooting({ agenda, fuso }: { agenda: string; fuso: string }) {
           inclusão de conta.
         </li>
         <li>
-          <span className="font-semibold">4. Conferir o agendamento.</span> Esta tela
-          espera a carga às <span className="veri-numero">{agenda}</span> no fuso{" "}
-          <span className="veri-numero">{fuso}</span>. Esse valor é declarado em
-          variável de ambiente e <em>não</em> é lido do crontab: se alguém mudar o cron
-          sem mudar a variável, o horário exibido aqui fica errado.
+          <span className="font-semibold">4. Conferir o agendamento.</span>{" "}
+          {agenda ? (
+            <>
+              Esta tela espera a carga às{" "}
+              <span className="veri-numero">{agenda.horario}</span> no fuso{" "}
+              <span className="veri-numero">{agenda.fuso}</span>.
+            </>
+          ) : (
+            <>O horário esperado não pôde ser lido nesta carga da página.</>
+          )}{" "}
+          Esse valor é declarado em variável de ambiente e <em>não</em> é lido do
+          crontab: se alguém mudar o cron sem mudar a variável, o horário exibido aqui
+          fica errado.
           <pre className="veri-numero mt-1 overflow-x-auto rounded-lg bg-veri-offwhite px-4 py-2 text-xs">
             ssh ubuntu@&lt;ec2&gt; &apos;crontab -l | grep etl&apos;
           </pre>
@@ -259,10 +350,30 @@ async function EstruturaDoBanco({
 }: {
   db: Awaited<ReturnType<typeof checkDbHealth>>;
 }) {
-  const [tabelas, privilegios] = await Promise.all([
-    listarTabelas(),
-    listarPrivilegiosDoApp(),
+  // Mesma protecao do corpo da pagina: este e um componente de servidor
+  // ASSINCRONO, e uma excecao aqui sobe pela arvore e derruba tudo -- inclusive
+  // o que ja tinha carregado acima dele.
+  const [secaoTabelas, secaoPrivilegios] = await Promise.all([
+    tentarSecao("catalogo-tabelas", () => listarTabelas()),
+    tentarSecao("privilegios-app", () => listarPrivilegiosDoApp()),
   ]);
+
+  if (!secaoTabelas.ok && !secaoPrivilegios.ok) {
+    return (
+      <SecaoIndisponivel
+        titulo="Banco de dados"
+        erro={secaoTabelas.erro}
+        consequencia={
+          "Não foi possível ler o catálogo do PostgreSQL. A conexão respondeu ao " +
+          "health check, então o banco está de pé — o que falhou foi a leitura de " +
+          "pg_catalog/information_schema, o que costuma ser falta de privilégio."
+        }
+      />
+    );
+  }
+
+  const tabelas = secaoTabelas.ok ? secaoTabelas.valor : [];
+  const privilegios = secaoPrivilegios.ok ? secaoPrivilegios.valor : [];
 
   const podeEscrever = privilegios.filter((p) => /INSERT|UPDATE|DELETE/.test(p.privilegios));
 
@@ -287,6 +398,11 @@ async function EstruturaDoBanco({
             Contagem de linhas é estimativa do planejador (pg_class.reltuples), não
             contagem exata.
           </p>
+          {!secaoTabelas.ok && (
+            <p className="veri-numero mt-2 break-words text-xs text-veri-vinho">
+              Leitura falhou: {secaoTabelas.erro}
+            </p>
+          )}
           <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[24rem] text-sm">
               <thead>
@@ -323,6 +439,11 @@ async function EstruturaDoBanco({
           <p className="mt-1 text-xs text-texto-suave">
             Quem manda é o GRANT no banco, não o código da aplicação.
           </p>
+          {!secaoPrivilegios.ok && (
+            <p className="veri-numero mt-2 break-words text-xs text-veri-vinho">
+              Leitura falhou: {secaoPrivilegios.erro}
+            </p>
+          )}
 
           {podeEscrever.length > 0 && (
             <p className="mt-3 rounded-lg border border-veri-verde/40 bg-veri-verde/10 px-4 py-2 text-xs text-veri-verde-escuro">

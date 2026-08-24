@@ -107,7 +107,17 @@ async function executar<T extends QueryResultRow>(
   return result.rows;
 }
 
-/** Igual a `query`, mas exige exatamente uma linha. */
+/**
+ * Igual a `query`, mas exige exatamente uma linha -- e LANCA se nao houver.
+ *
+ * Use apenas quando "zero linhas" for um DEFEITO: agregacao (`count`, `sum`,
+ * `max`), `SELECT EXISTS`, `INSERT ... DO UPDATE RETURNING`, ou leitura por
+ * chave ja confirmada por uma checagem de existencia. Nesses casos zero linhas
+ * significa que uma premissa quebrou, e a excecao esta certa.
+ *
+ * Para leitura em que a AUSENCIA e um resultado legitimo -- "existe job vivo
+ * para esta conta?", `ON CONFLICT DO NOTHING RETURNING` -- use `queryOpcional`.
+ */
 export async function queryOne<T extends QueryResultRow>(
   sql: string,
   params: ReadonlyArray<unknown> = [],
@@ -117,6 +127,46 @@ export async function queryOne<T extends QueryResultRow>(
     throw new Error(`Esperava 1 linha, recebi ${rows.length}.`);
   }
   return rows[0];
+}
+
+/**
+ * Igual a `queryOne`, mas ZERO LINHAS E UM RESULTADO, nao um erro.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE ISTO EXISTE (e por que a falta dele derrubou o Diagnostico)
+ *
+ * `queryOne` devolve `Promise<T>`, um tipo NAO-NULAVEL, e lanca quando nao ha
+ * linha. As duas metades dessa assinatura sao coerentes entre si, mas juntas
+ * criam uma armadilha silenciosa: quem escreve
+ *
+ *     const linha = await queryOne<L>("... LIMIT 1");
+ *     return linha ? mapear(linha) : null;
+ *
+ * escreve uma verificacao de nulo que o TypeScript aceita sem reclamar -- `L` e
+ * um objeto, entao `linha ?` e sempre verdadeiro -- e que NUNCA RODA. O autor
+ * acredita ter tratado a ausencia; o codigo lanca. O compilador nao avisa, o
+ * teste com dado presente passa, e a falha aparece so quando a linha some.
+ *
+ * Foi exatamente o que aconteceu com `cloud_sync_jobs`: a tela funcionou
+ * enquanto havia job na fila e quebrou no instante em que o ultimo job chegou a
+ * `success` -- o estado de REPOUSO da fila.
+ *
+ * Com esta funcao a distincao vira tipo: `T | null` obriga o chamador a tratar,
+ * e o `?` deixa de ser decorativo.
+ *
+ * Mais de uma linha continua sendo defeito: quem pede "no maximo uma" e recebe
+ * varias esta lendo com um filtro que nao identifica o que pensa identificar, e
+ * devolver a primeira silenciosamente esconderia isso.
+ */
+export async function queryOpcional<T extends QueryResultRow>(
+  sql: string,
+  params: ReadonlyArray<unknown> = [],
+): Promise<T | null> {
+  const rows = await query<T>(sql, params);
+  if (rows.length > 1) {
+    throw new Error(`Esperava no máximo 1 linha, recebi ${rows.length}.`);
+  }
+  return rows[0] ?? null;
 }
 
 export type DbHealth =

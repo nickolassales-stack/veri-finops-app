@@ -50,17 +50,19 @@ export function CabecalhoAnalitico() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="veri-display text-3xl text-veri-verde-escuro">
-            Analítico
-            {ehOvh && (
-              // No TÍTULO e não só no selo: o pedido é explícito, e um título que
-              // se distingue sozinho sobrevive a print de tela e a colagem em
-              // e-mail, onde o selo colorido ao lado se perde.
-              <span className="ml-2 align-middle text-base font-semibold uppercase tracking-wide text-texto-suave">
-                [Visão OVH]
-              </span>
-            )}
-          </h1>
+          {/* UMA indicação de visão, e ela é o selo ao lado.
+
+              Houve aqui um `[Visão OVH]` dentro do próprio título, somado ao selo
+              — e o resultado na tela era "Analítico [VISÃO OVH] [VISÃO OVH]", a
+              mesma informação duas vezes com dois desenhos diferentes, a meio
+              centímetro de distância. Repetição adjacente não reforça: faz o
+              leitor procurar a diferença entre as duas e não achar nenhuma.
+
+              O selo é o que fica porque ele já é o padrão do portal para dizer
+              provedor (o mesmo `SeloProvider` do Diagnóstico e de Contas Cloud),
+              e porque o título volta a ser só o nome da tela — igual ao das
+              outras. */}
+          <h1 className="veri-display text-3xl text-veri-verde-escuro">Analítico</h1>
           <span
             className={[
               "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide",

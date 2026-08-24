@@ -11,6 +11,7 @@ export {
   query,
   queryForaDoEscopo,
   queryOne,
+  queryOpcional,
   type DbHealth,
 } from "./client";
 

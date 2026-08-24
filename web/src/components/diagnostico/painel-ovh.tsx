@@ -7,6 +7,8 @@ import {
   resumoOrigem,
   type OrigemCredenciais,
 } from "@/lib/diagnostico/credenciais-ovh";
+import type { AlertaOvh } from "@/lib/diagnostico/ovh";
+import type { Secao } from "@/lib/diagnostico/resiliencia";
 import { formatDataHora, formatInteiro } from "@/lib/format";
 import type { VisaoOvh } from "@/lib/services/ovh";
 
@@ -22,17 +24,38 @@ import type { VisaoOvh } from "@/lib/services/ovh";
  * o identificador de query da OVH sao substituidos antes de chegar ao banco.
  * Ainda assim ela aparece dentro de um bloco de largura limitada e truncada em
  * 500 caracteres pela query -- um stack inteiro na tela nao ajuda ninguem.
+ *
+ * ---------------------------------------------------------------------------
+ * CADA BLOCO CAI SOZINHO
+ *
+ * `ovh` e `origem` chegam como `Secao<…>` — resultado que pode ter falhado — e
+ * não como o dado pronto. São TRÊS consultas independentes por trás deste
+ * quadro: o histórico de execuções (`ovh_sync_runs`), a origem das credenciais
+ * (`cloud_provider_credentials`) e a fila (`cloud_sync_jobs`). Elas falham por
+ * motivos diferentes, e uma tabela ausente costuma atingir só uma delas.
+ *
+ * Receber o dado já pronto obrigaria quem chama a decidir antes: ou mostra o
+ * quadro inteiro, ou não mostra nada. Justamente num quadro cujo propósito é
+ * dizer o que ainda funciona, "nada" seria a pior resposta possível.
  */
 export function PainelOvh({
-  ovh,
+  ovh: secaoOvh,
   tz,
   coleta,
-  origem,
+  origem: secaoOrigem,
+  alertasExtra = [],
 }: {
-  ovh: VisaoOvh;
+  ovh: Secao<VisaoOvh>;
   tz: string;
   /** De onde cada conta OVH tira a credencial. Ausente = não avaliado. */
-  origem?: OrigemCredenciais;
+  origem?: Secao<OrigemCredenciais>;
+  /**
+   * Alertas apurados fora deste componente — fila parada, cifragem ausente.
+   * Ficam aqui, e não numa faixa no topo da página, porque dizem respeito a
+   * este pipeline: um alerta de fila OVH acima do quadro do ETL AWS sugeriria
+   * que o problema é do ETL.
+   */
+  alertasExtra?: AlertaOvh[];
   /**
    * O bloco de coleta manual. Recebido como `ReactNode` e nao construido aqui de
    * proposito: este componente e de SERVIDOR, o botao e de cliente, e montar o
@@ -41,6 +64,9 @@ export function PainelOvh({
    */
   coleta?: ReactNode;
 }) {
+  const ovh = secaoOvh.ok ? secaoOvh.valor : null;
+  const origem = secaoOrigem?.ok ? secaoOrigem.valor : null;
+
   return (
     <Card
       titulo="OVH Collector"
@@ -48,11 +74,40 @@ export function PainelOvh({
       acao={<SeloProvider provider="ovh" />}
     >
       <div className="space-y-4">
-        {ovh.alertas.map((a) => (
+        {!secaoOvh.ok && (
+          <Aviso tom="critico" titulo="Histórico de execuções indisponível">
+            <p>
+              Não foi possível ler <span className="veri-numero">ovh_sync_runs</span>.
+              O que aparece abaixo sobre credenciais e coleta vem de outras tabelas e
+              continua válido.
+            </p>
+            <p className="veri-numero break-words text-xs">{secaoOvh.erro}</p>
+          </Aviso>
+        )}
+
+        {ovh?.alertas.map((a) => (
           <Aviso key={a.chave} tom={a.tom} titulo={a.titulo}>
             <p>{a.detalhe}</p>
           </Aviso>
         ))}
+
+        {alertasExtra.map((a) => (
+          <Aviso key={a.chave} tom={a.tom} titulo={a.titulo}>
+            <p>{a.detalhe}</p>
+          </Aviso>
+        ))}
+
+        {secaoOrigem && !secaoOrigem.ok && (
+          <Aviso tom="critico" titulo="Origem das credenciais indisponível">
+            <p>
+              Não foi possível apurar de onde cada conta OVH tira a credencial. Isto
+              não interrompe a coleta — só a verificação. Enquanto durar, não é
+              possível confirmar por esta tela se alguma conta ainda depende do
+              fallback legado.
+            </p>
+            <p className="veri-numero break-words text-xs">{secaoOrigem.erro}</p>
+          </Aviso>
+        )}
 
         {/* Alertas de ORIGEM DE CREDENCIAL vêm antes do botão de coleta: pedir
             uma coleta sem saber que a conta depende do arquivo é pedir a coleta
@@ -70,7 +125,7 @@ export function PainelOvh({
         {/* `erro_de_leitura` some com o bloco de metricas: elas viriam todas
             "—", e uma grade de travessoes ao lado de um alerta vermelho sugere
             que a coleta zerou, quando o que falhou foi a leitura. */}
-        {ovh.instalado && ovh.situacao !== "erro_de_leitura" && (
+        {ovh && ovh.instalado && ovh.situacao !== "erro_de_leitura" && (
           <>
             <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Item rotulo="Último status" valor={ovh.ultima?.status ?? "nunca executou"} />
@@ -190,6 +245,7 @@ export function PainelOvh({
         {/* Declarado, nao medido. O portal roda em container sem acesso ao
             crontab do host -- mesma limitacao da agenda do ETL AWS, e pelo
             mesmo motivo esta escrito em vez de verificado. */}
+        {ovh && (
         <p className="text-xs text-texto-suave">
           Agendamento:{" "}
           {ovh.cronInstalado ? (
@@ -219,6 +275,7 @@ export function PainelOvh({
           sem acesso ao host. Se alguém mudar o cron sem mudar a variável, esta linha
           passa a mentir.
         </p>
+        )}
       </div>
     </Card>
   );

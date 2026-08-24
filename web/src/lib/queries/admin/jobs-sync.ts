@@ -1,6 +1,6 @@
 import "server-only";
 
-import { query, queryOne } from "@/lib/database";
+import { query, queryOne, queryOpcional } from "@/lib/database";
 
 /**
  * Acesso a `cloud_sync_jobs` -- a fila entre o portal e o collector.
@@ -147,7 +147,7 @@ export function esquecerDisponibilidadeFila(): void {
 
 // ------------------------------------------------------------------- leitura
 export async function jobAtivoDaConta(accountId: string): Promise<JobSync | null> {
-  const linha = await queryOne<LinhaJob>(
+  const linha = await queryOpcional<LinhaJob>(
     `SELECT ${COLUNAS}
        FROM cloud_sync_jobs
       WHERE provider = $1 AND account_id = $2 AND status = ANY($3)
@@ -159,7 +159,7 @@ export async function jobAtivoDaConta(accountId: string): Promise<JobSync | null
 }
 
 export async function ultimoJobDaConta(accountId: string): Promise<JobSync | null> {
-  const linha = await queryOne<LinhaJob>(
+  const linha = await queryOpcional<LinhaJob>(
     `SELECT ${COLUNAS}
        FROM cloud_sync_jobs
       WHERE provider = $1 AND account_id = $2
@@ -201,7 +201,7 @@ export async function enfileirarColeta(
   action: AcaoJob,
   requestedBy: string | null,
 ): Promise<{ job: JobSync; criado: boolean }> {
-  const linha = await queryOne<LinhaJob>(
+  const linha = await queryOpcional<LinhaJob>(
     `INSERT INTO cloud_sync_jobs (provider, account_id, action, status, requested_by)
      VALUES ($1, $2, $3, 'queued', $4)
          ON CONFLICT DO NOTHING
@@ -216,7 +216,7 @@ export async function enfileirarColeta(
 
   // Nao criou e nao existe job vivo. So acontece se a linha foi concluida entre
   // as duas consultas -- raro, e a resposta certa e tentar de novo uma vez.
-  const segunda = await queryOne<LinhaJob>(
+  const segunda = await queryOpcional<LinhaJob>(
     `INSERT INTO cloud_sync_jobs (provider, account_id, action, status, requested_by)
      VALUES ($1, $2, $3, 'queued', $4)
          ON CONFLICT DO NOTHING
