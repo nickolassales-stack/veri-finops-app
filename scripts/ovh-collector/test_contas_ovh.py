@@ -91,6 +91,8 @@ class CursorFalso:
         self._respostas = respostas
         self._atual = None
         self.consultas: list[str] = []
+        self.parametros: list = []
+        self.rowcount = 0
 
     def __enter__(self):
         return self
@@ -100,7 +102,9 @@ class CursorFalso:
 
     def execute(self, sql: str, params=None) -> None:
         self.consultas.append(" ".join(sql.split()))
+        self.parametros.append(params)
         self._atual = self._respostas.pop(0) if self._respostas else []
+        self.rowcount = len(self._atual) if isinstance(self._atual, list) else 0
 
     def fetchall(self):
         return self._atual
@@ -153,6 +157,20 @@ def linha_de_conta(
 
 def banco_com(linhas: list[tuple], tabela_existe: bool = True) -> ConexaoFalsa:
     return ConexaoFalsa([[(tabela_existe,)], linhas])
+
+
+def banco_completo(linhas: list[tuple], inativas: tuple[str, ...] = ()) -> ConexaoFalsa:
+    """
+    Conexao para `descobrir_contas`, que faz QUATRO consultas em ordem:
+
+      1. to_regclass de cloud_provider_credentials
+      2. SQL_CONTAS
+      3. to_regclass de cloud_accounts
+      4. SQL_OVH_INATIVAS
+    """
+    return ConexaoFalsa(
+        [[(True,)], linhas, [(True,)], [(i,) for i in inativas]]
+    )
 
 
 # =========================================================== 1. decifragem
@@ -418,43 +436,103 @@ class TestePrecedencia(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_banco_vence_accounts_d_e_env(self) -> None:
-        conexao = banco_com([linha_de_conta(self.sub, "ovh-do-banco")])
+    def test_banco_e_legado_se_somam_por_conta(self) -> None:
+        """
+        A mudanca que corrige perda silenciosa de coleta.
+
+        Antes, uma credencial no banco fazia a origem virar `banco` e toda conta
+        que existia so no `.env` saia da coleta -- sem erro e com o run marcado
+        `success`. Agora as origens se somam por conta.
+        """
+        conexao = banco_completo([linha_de_conta(self.sub, "ovh-do-banco")])
         d = descobrir_contas(
             conexao,
             chave_mestra_b64=CHAVE_B64,
             diretorio_accounts_d=self.d,
             arquivo_env=self.env,
         )
-        self.assertEqual(d.origem, "banco")
-        self.assertEqual([c.provider_account_id for c in d.contas], ["ovh-do-banco"])
-        # Nenhum aviso de fallback quando o banco resolveu.
-        self.assertNotIn(mod.AVISO_FALLBACK, d.avisos)
+        self.assertEqual(
+            sorted(c.provider_account_id for c in d.contas),
+            ["ovh-do-arquivo", "ovh-do-banco", "ovh-do-env"],
+        )
+        self.assertEqual(d.origem, "banco+legado")
 
-    def test_sem_banco_cai_em_accounts_d_com_o_aviso_exigido(self) -> None:
-        conexao = banco_com([])  # tabela existe, zero credenciais
+    def test_aviso_por_conta_usa_o_texto_exigido(self) -> None:
+        conexao = banco_completo([])
         d = descobrir_contas(
             conexao,
             chave_mestra_b64=CHAVE_B64,
             diretorio_accounts_d=self.d,
             arquivo_env=self.env,
         )
-        self.assertEqual(d.origem, "accounts.d")
-        self.assertIn(
-            "Usando fallback accounts.d; migracao para credenciais no banco recomendada.",
-            d.avisos,
-        )
+        self.assertIn("Usando fallback legado para conta ovh-do-arquivo", d.avisos)
+        self.assertIn("Usando fallback legado para conta ovh-do-env", d.avisos)
 
-    def test_sem_banco_e_sem_accounts_d_cai_no_env(self) -> None:
-        conexao = banco_com([])
+    def test_conta_no_banco_ignora_o_arquivo_com_mesmo_id(self) -> None:
+        """
+        O arquivo perde para o banco NA MESMA CONTA -- e isso tambem e proposital.
+
+        Se o arquivo vencesse, uma rotacao feita pela tela seria descartada porque
+        alguem esqueceu de limpar o `.env`, e a coleta seguiria com a credencial
+        antiga: parece certo e esta errado.
+        """
+        conexao = banco_completo([linha_de_conta(self.sub, "ovh-do-env")])
         d = descobrir_contas(
             conexao,
             chave_mestra_b64=CHAVE_B64,
             diretorio_accounts_d=self.raiz / "nao-existe",
             arquivo_env=self.env,
         )
-        self.assertEqual(d.origem, ".env")
         self.assertEqual([c.provider_account_id for c in d.contas], ["ovh-do-env"])
+        self.assertEqual([c.origem for c in d.contas], ["banco"])
+        self.assertEqual(d.origem, "banco")
+        self.assertNotIn("Usando fallback legado para conta ovh-do-env", d.avisos)
+
+    def test_conta_desativada_nao_volta_pelo_fallback(self) -> None:
+        """
+        `SQL_CONTAS` exige `a.active`, mas ARQUIVO nao sabe de `active`.
+
+        Sem a guarda, desativar uma conta pela tela e ainda ter a chave no `.env`
+        faria a coleta continuar -- o oposto exato do que desativar significa.
+        """
+        conexao = banco_completo([], inativas=("ovh-do-env",))
+        d = descobrir_contas(
+            conexao,
+            chave_mestra_b64=CHAVE_B64,
+            diretorio_accounts_d=self.raiz / "nao-existe",
+            arquivo_env=self.env,
+        )
+        self.assertEqual(d.contas, [])
+        self.assertEqual(d.origem, "nenhuma")
+        self.assertTrue(
+            any("desativada em cloud_accounts" in a for a in d.avisos), d.avisos
+        )
+
+    def test_sem_banco_usa_so_o_legado(self) -> None:
+        conexao = banco_completo([])
+        d = descobrir_contas(
+            conexao,
+            chave_mestra_b64=CHAVE_B64,
+            diretorio_accounts_d=self.raiz / "nao-existe",
+            arquivo_env=self.env,
+        )
+        self.assertEqual(d.origem, "legado")
+        self.assertEqual([c.provider_account_id for c in d.contas], ["ovh-do-env"])
+        self.assertIn(mod.AVISO_FALLBACK_ENV, d.avisos)
+
+    def test_accounts_d_vence_env_para_a_mesma_conta(self) -> None:
+        mesmo = self.raiz / "accounts.d" / "duplicada.env"
+        mesmo.write_text(
+            TesteFallbacks.ENV_COMPLETO.replace("ovh-do-arquivo", "ovh-do-env"),
+            encoding="utf-8",
+        )
+        d = descobrir_contas(
+            None,
+            diretorio_accounts_d=self.d,
+            arquivo_env=self.env,
+        )
+        origens = {c.provider_account_id: c.origem for c in d.contas}
+        self.assertEqual(origens["ovh-do-env"], "accounts.d")
 
     def test_conexao_none_ainda_tenta_os_fallbacks(self) -> None:
         d = descobrir_contas(
@@ -462,7 +540,7 @@ class TestePrecedencia(unittest.TestCase):
             diretorio_accounts_d=self.raiz / "nao-existe",
             arquivo_env=self.env,
         )
-        self.assertEqual(d.origem, ".env")
+        self.assertEqual(d.origem, "legado")
 
     def test_nenhuma_origem_devolve_lista_vazia(self) -> None:
         d = descobrir_contas(

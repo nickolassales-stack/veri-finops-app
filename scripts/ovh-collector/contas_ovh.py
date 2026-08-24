@@ -403,8 +403,47 @@ AVISO_FALLBACK_ENV = (
 @dataclass
 class Descoberta:
     contas: list[ContaOvh]
+    #: "banco" | "legado" | "banco+legado" | "nenhuma" -- RESUMO das origens.
+    #: A origem de cada conta esta em `ContaOvh.origem`; desde a uniao por conta,
+    #: uma execucao pode legitimamente ter contas de origens diferentes.
     origem: str
     avisos: list[str]
+
+
+def aviso_fallback_conta(account_id: str) -> str:
+    """Uma linha por conta que caiu no legado, com o id explicito."""
+    return f"Usando fallback legado para conta {account_id}"
+
+
+SQL_OVH_INATIVAS = """
+SELECT account_id
+  FROM cloud_accounts
+ WHERE provider = 'ovh'
+   AND NOT active
+"""
+
+
+def ids_ovh_inativos(conexao, avisar) -> set[str]:
+    """
+    Contas OVH explicitamente DESATIVADAS em `cloud_accounts`.
+
+    Existe por causa do fallback por conta. `SQL_CONTAS` ja exige `a.active`, mas
+    o fallback le ARQUIVO, e arquivo nao sabe de `active`: sem este conjunto, uma
+    conta desativada pela tela voltaria a ser coletada pelo `.env` -- o oposto
+    exato do que desativar significa, e sem nenhum sinal de que aconteceu.
+
+    Falha de leitura devolve conjunto vazio com aviso, e nao excecao: nao saber
+    quais contas estao desativadas e motivo para coletar a mais, nao para parar.
+    """
+    if not _tabela_existe(conexao, "cloud_accounts"):
+        return set()
+    try:
+        with conexao.cursor() as cur:
+            cur.execute(SQL_OVH_INATIVAS)
+            return {linha[0] for linha in cur.fetchall()}
+    except Exception as exc:  # noqa: BLE001
+        avisar(f"nao foi possivel ler contas desativadas ({exc})")
+        return set()
 
 
 def descobrir_contas(
@@ -415,34 +454,82 @@ def descobrir_contas(
     arquivo_env: Path | None = None,
 ) -> Descoberta:
     """
-    A ordem completa: banco -> accounts.d -> .env.
+    Uniao POR CONTA: o banco manda nas contas que ele tem, o legado cobre o resto.
 
-    `conexao` pode ser `None`: sem banco, so os fallbacks sao tentados. Serve ao
-    caso de a migracao 006 nao existir ainda naquele ambiente.
+    ISTO MUDOU, E A MUDANCA CORRIGE PERDA SILENCIOSA DE COLETA
+    ----------------------------------------------------------
+    A primeira versao escolhia UMA origem para todas as contas: banco, senao
+    accounts.d, senao `.env`. O efeito colateral era grave -- cadastrar a
+    primeira credencial pela tela fazia a origem virar `banco`, e toda conta que
+    existia so no `.env` saia da coleta. Sem erro, sem aviso, com o run marcado
+    `success`. Pior que uma falha, porque falha aparece.
+
+    Agora a decisao e por conta:
+      - conta com credencial no banco  -> usa o banco, e o arquivo e IGNORADO;
+      - conta sem credencial no banco  -> usa accounts.d, senao `.env`.
+
+    O arquivo continuar sendo ignorado para conta que ESTA no banco tambem e
+    proposital, e pelo motivo oposto: se o arquivo vencesse, uma rotacao feita
+    pela tela seria descartada porque alguem esqueceu de limpar o `.env`, e a
+    coleta seguiria com a credencial antiga.
+
+    `conexao` pode ser `None`: sem banco, so os fallbacks sao tentados -- caso de
+    ambiente onde a migracao 006 ainda nao rodou, ou de Postgres momentaneamente
+    fora do ar. Nesse caso nao ha como saber quais contas estao desativadas, e a
+    escolha e coletar.
     """
     avisos: list[str] = []
 
     def avisar(msg: str) -> None:
         avisos.append(msg)
 
+    do_banco: list[ContaOvh] = []
+    inativas: set[str] = set()
+
     if conexao is not None:
-        contas = carregar_do_banco(conexao, chave_mestra_b64 or "", avisar)
-        if contas:
-            return Descoberta(contas, "banco", avisos)
+        do_banco = carregar_do_banco(conexao, chave_mestra_b64 or "", avisar)
+        inativas = ids_ovh_inativos(conexao, avisar)
+
+    contas: list[ContaOvh] = list(do_banco)
+    vistos: set[str] = {c.provider_account_id for c in contas}
+
+    def acrescentar(candidatas: list[ContaOvh]) -> int:
+        """Acrescenta so as contas que o banco nao cobriu. Devolve quantas."""
+        adicionadas = 0
+        for conta in candidatas:
+            cid = conta.provider_account_id
+            if cid in vistos:
+                continue
+            if cid in inativas:
+                avisar(f"{cid}: ignorada, conta desativada em cloud_accounts")
+                continue
+            vistos.add(cid)
+            contas.append(conta)
+            avisar(aviso_fallback_conta(cid))
+            adicionadas += 1
+        return adicionadas
+
+    usou_legado = False
 
     if diretorio_accounts_d is not None:
-        contas = carregar_de_accounts_d(diretorio_accounts_d, avisar)
-        if contas:
+        if acrescentar(carregar_de_accounts_d(diretorio_accounts_d, avisar)):
             avisos.append(AVISO_FALLBACK)
-            return Descoberta(contas, "accounts.d", avisos)
+            usou_legado = True
 
     if arquivo_env is not None:
-        contas = carregar_de_env_unico(arquivo_env, avisar)
-        if contas:
+        if acrescentar(carregar_de_env_unico(arquivo_env, avisar)):
             avisos.append(AVISO_FALLBACK_ENV)
-            return Descoberta(contas, ".env", avisos)
+            usou_legado = True
 
-    return Descoberta([], "nenhuma", avisos)
+    if not contas:
+        return Descoberta([], "nenhuma", avisos)
+    if do_banco and usou_legado:
+        origem = "banco+legado"
+    elif do_banco:
+        origem = "banco"
+    else:
+        origem = "legado"
+    return Descoberta(contas, origem, avisos)
 
 
 def filtrar(contas: Iterable[ContaOvh], apenas: str | None) -> list[ContaOvh]:

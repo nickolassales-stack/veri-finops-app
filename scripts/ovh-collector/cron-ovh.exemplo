@@ -53,3 +53,43 @@
 # procure por "contas que falharam".
 
 0 9 * * * cd /opt/finops/ovh-collector && ./run-ovh-etl.sh cron --all >> /opt/finops/ovh-collector/logs/cron.log 2>&1
+
+# ---------------------------------------------------------------------------
+# WORKER DA FILA (cloud_sync_jobs) -- migracao 008
+#
+# O portal nao executa coleta: o botao "Salvar e executar primeira coleta"
+# INSERE uma linha em `cloud_sync_jobs`. Este worker, no host, atende a fila.
+#
+# A CADA MINUTO, e nao a cada hora: o valor do botao e a coleta comecar enquanto
+# a pessoa ainda esta na tela. Uma janela de uma hora faria o recurso parecer
+# quebrado, e alguem rodaria a coleta a mao -- ou seja, o botao nao existiria.
+#
+# Um minuto e seguro por causa do `flock` dentro do script: se um worker ainda
+# esta rodando, o proximo sai com codigo 75 sem fazer nada. Nao empilha processo
+# numa instancia de 3,8 GiB que ja roda Metabase.
+#
+# NAO DUPLICA COLETA com a linha das 09:00 acima. Os dois caminhos tomam
+# `pg_try_advisory_lock` na mesma chave (`ovh-sync:<conta>`): quem chegar depois
+# pula a conta e registra "pulada, ja esta sendo coletada por outro processo".
+# Pular NAO conta como falha -- a coleta esta acontecendo, so nao naquele
+# processo.
+#
+# ANTES DE INSTALAR, confirme que a migracao 008 rodou e que o worker sai limpo
+# com a fila vazia:
+#
+#   /opt/finops/ovh-collector/run-cloud-sync-jobs.sh
+#   tail -5 /opt/finops/ovh-collector/logs/jobs.log     # espera "nada na fila"
+#
+# VALIDAR depois de instalar, enfileirando a mao:
+#
+#   cd /opt/finops/ovh-collector
+#   venv/bin/python processar_jobs.py --enfileirar ovh-main-ca
+#   docker exec -i finops-postgres psql -U finops_user -d finops \
+#     -c "SELECT id, account_id, status, attempts, sync_run_id FROM cloud_sync_jobs \
+#         ORDER BY requested_at DESC LIMIT 5;"
+#
+# SEM A MIGRACAO 008 o worker sai com codigo 2 e a mensagem "fila ausente" -- de
+# proposito, e nao com traceback: a cada minuto, um traceback encheria o log e
+# esconderia problema de verdade.
+
+* * * * * cd /opt/finops/ovh-collector && ./run-cloud-sync-jobs.sh >> /opt/finops/ovh-collector/logs/jobs-cron.log 2>&1

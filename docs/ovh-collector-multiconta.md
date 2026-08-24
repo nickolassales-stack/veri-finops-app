@@ -20,14 +20,42 @@ Três origens, nesta precedência ([contas_ovh.py](../scripts/ovh-collector/cont
 | 2 | `accounts.d/*.env` — um arquivo por conta | fallback |
 | 3 | `.env` — arquivo único, uma conta | fallback |
 
-**A primeira que devolver alguma conta ganha.** Não há mistura: se o banco tem
-uma conta e o `.env` tem outra, só a do banco coleta.
+**A decisão é POR CONTA, não por conjunto:**
 
-Essa precedência é o ponto mais importante do desenho. Se o `.env` vencesse — ou
-se as duas somassem — uma rotação feita pela tela seria **silenciosamente
-ignorada** porque alguém esqueceu de limpar o arquivo. O sintoma seria a coleta
-continuando a funcionar com a credencial antiga: parece certo e está errado, que
-é o pior desfecho possível.
+- conta **com** credencial no banco → usa o banco, e o arquivo é **ignorado**;
+- conta **sem** credencial no banco → usa `accounts.d`, senão o `.env`.
+
+As duas metades dessa regra existem para impedir erros opostos, e vale entender
+por que nenhuma delas pode ser afrouxada.
+
+**O arquivo perde para o banco na mesma conta.** Se o arquivo vencesse, uma
+rotação feita pela tela seria silenciosamente descartada porque alguém esqueceu de
+limpar o `.env`, e a coleta continuaria funcionando com a credencial antiga —
+parece certo e está errado.
+
+**O banco não elimina as contas que só existem no arquivo.** Esta metade foi um
+defeito corrigido depois. A primeira versão escolhia **uma** origem para todas as
+contas, e o efeito era grave: cadastrar a primeira credencial pela tela fazia a
+origem virar `banco` e **toda conta que existia só no `.env` saía da coleta** —
+sem erro, sem aviso, com o run marcado `success`. Pior que uma falha, porque
+falha aparece no diagnóstico e essa não aparecia em lugar nenhum.
+
+### A guarda que o arquivo não tem
+
+`SQL_CONTAS` exige `a.active`, mas **arquivo não sabe de `active`**. Sem uma
+guarda, desativar uma conta pela tela e ainda ter a chave no `.env` faria a coleta
+continuar — o oposto exato do que desativar significa.
+
+Por isso `ids_ovh_inativos()` lê as contas OVH marcadas `active = false` e o
+fallback pula quem estiver nessa lista:
+
+```
+aviso: ovh-antiga-ca: ignorada, conta desativada em cloud_accounts
+```
+
+Se essa consulta falhar, o conjunto volta vazio com aviso em vez de exceção: não
+saber quais contas estão desativadas é motivo para coletar a mais, não para parar
+tudo.
 
 A consulta ao banco:
 
@@ -169,9 +197,10 @@ origem das credenciais: banco
 contas a sincronizar (1): ovh-main-ca(ovh-ca,ovh-ca,via banco)
 ```
 
-E quando cai no fallback, o aviso exigido aparece:
+E quando cai no fallback, o aviso aparece **por conta**, com o id explícito:
 
 ```
+aviso: Usando fallback legado para conta ovh-main-ca
 aviso: Usando fallback accounts.d; migracao para credenciais no banco recomendada.
 aviso: Usando fallback .env; migracao para credenciais no banco recomendada.
 ```
@@ -189,17 +218,33 @@ ambiente: o valor vai direto para memória e morre com o processo.
 ## 6. Como adicionar uma conta nova pelo portal
 
 1. A conta precisa existir em `cloud_accounts` com `provider = 'ovh'` e `active`
-   (isso vem do onboarding, não da tela)
+   (isso vem do onboarding, não da tela — a API de contas tem GET e PATCH, não POST)
 2. Como **ADMIN**, abra Configurações › Contas Cloud
 3. No bloco *Credenciais OVH* da conta: endpoint, Application Key, Secret,
    Consumer Key
-4. **Testar conexão** → **Salvar credenciais**
-5. Colete só ela, para conferir sem esperar o cron:
-   ```bash
-   ./run-ovh-etl.sh manual --account <provider_account_id>
-   ```
+4. **Salvar e executar primeira coleta** — salva, testa e enfileira, nessa ordem
 
-Detalhe completo do cadastro em [CONTAS-CLOUD.md](CONTAS-CLOUD.md).
+O botão faz as três coisas porque a ordem importa. Enfileirar sem testar criaria um
+job destinado a falhar, e a tela mostraria "coleta enfileirada" seguida de erro
+alguns minutos depois; testar primeiro troca isso por um erro imediato, com a causa
+em mãos. Salvar acontece de todo jeito: se a OVH estiver fora do ar, a credencial
+fica gravada e só o disparo é recusado — perder o que foi digitado por causa de uma
+indisponibilidade do provedor seria o pior desfecho.
+
+Se preferir os passos separados: **Testar conexão** → **Salvar credenciais** →
+**Testar conexão** de novo. O segundo teste não é redundante: salvar reseta o
+status para `nao_validado` de propósito (credencial nova nunca foi testada), então
+sem ele a tela fica dizendo "não validado" depois de um teste que passou.
+
+A coleta é atendida pelo worker no minuto seguinte. Para não esperar:
+
+```bash
+./run-cloud-sync-jobs.sh                              # atende a fila agora
+./run-ovh-etl.sh manual --account <provider_account_id>   # ignora a fila
+```
+
+Detalhe completo do cadastro em [CONTAS-CLOUD.md](CONTAS-CLOUD.md); a mecânica da
+fila na seção 10.
 
 ---
 
@@ -287,7 +332,159 @@ portal, e só por ação de um ADMIN.
 
 ---
 
-## 10. Plano para descomissionar o fallback
+## 10. A fila `cloud_sync_jobs` e o worker
+
+### Por que uma fila, e não uma chamada direta
+
+O portal roda no container `finops-portal`. O collector roda no **host**, em
+`/opt/finops/ovh-collector`, com venv próprio. O container não tem o filesystem do
+host montado, não tem o venv e não tem o interpretador do collector — e dar-lhe
+qualquer um dos três significaria montar diretório do host num processo que atende
+requisição HTTP pública.
+
+Executar shell a partir de rota HTTP é a alternativa que a fila existe para
+evitar. Mesmo parametrizado com cuidado, transforma a tela de configuração em
+superfície de execução de comando.
+
+Então a tela **não executa nada**: ela insere uma linha. O worker no host, que já
+tem tudo de que precisa, lê a linha e trabalha. A fronteira de confiança fica no
+banco, que os dois lados já acessam de qualquer forma.
+
+Isso aparece nos GRANTs da [migração 008](../scripts/migrations/008-cloud-sync-jobs.sql):
+`finops_app` tem **SELECT e INSERT**, e não UPDATE. O portal enfileira e lê; quem
+processa é o collector.
+
+### Os três cadeados
+
+Confundir os três leva a implementar um e achar que os outros estão resolvidos.
+
+| # | Problema | Mecanismo | Onde |
+|---|---|---|---|
+| 1 | Duas execuções do **worker** ao mesmo tempo | `flock -n` | [run-cloud-sync-jobs.sh](../scripts/ovh-collector/run-cloud-sync-jobs.sh) |
+| 2 | Dois **jobs** para a mesma conta na fila | índice único parcial | migração 008 |
+| 3 | Worker e **coleta diária** na mesma conta | `pg_try_advisory_lock` | [jobs_ovh.py](../scripts/ovh-collector/jobs_ovh.py) |
+
+**1 — `flock`.** O cron chama a cada minuto; um worker que demore 90 s encontraria
+o próximo já subindo. `-n` desiste em vez de esperar (saída 75): uma fila de
+workers esperando só adiaria o problema e consumiria memória de uma instância de
+3,8 GiB que já roda Metabase. O `exec 9>` mantém o descritor aberto, então o lock
+é liberado pelo kernel mesmo se o worker for morto com `SIGKILL` — um
+arquivo-marcador ficaria preso para sempre nesse caso.
+
+**2 — índice único parcial.** `cloud_sync_jobs_conta_ativa_uniq` cobre
+`(provider, account_id) WHERE status IN ('queued','running')`. É o que faz o botão
+ser seguro de clicar duas vezes. Deixar essa checagem para a aplicação seria
+confiar em `SELECT` antes de `INSERT`, que é corrida perdida por definição: duas
+requisições simultâneas leem "não existe" e as duas inserem. O banco é o único
+lugar onde a verificação é atômica.
+
+**3 — lock consultivo.** O índice **não** cobre a coleta das 09:00, que não passa
+por job nenhum. Os dois caminhos tomam `pg_try_advisory_lock(hashtext('ovh-sync:' || conta))`.
+Quem chegar depois pula:
+
+```
+ovh-main-ca: pulada, ja esta sendo coletada por outro processo
+```
+
+**Pular não conta como falha** — a coleta está acontecendo, só não naquele
+processo. Contar como falha faria o cron alarmar por causa de uma coleta
+bem-sucedida. O resumo separa as duas coisas:
+
+```
+contas processadas: 1  sucesso: 1  falhas: 0  puladas (em coleta): 1
+```
+
+`try` e não a versão bloqueante: se a conta está sendo coletada agora, a resposta
+certa é desistir e tentar no próximo ciclo, não empilhar processos.
+
+### O ciclo de vida de um job
+
+```
+        portal (botão)                worker (cron, 1 min)
+             │                                │
+     INSERT status='queued'                   │
+             │                                │
+             │        ┌──── reivindicar: UPDATE ... FOR UPDATE SKIP LOCKED
+             │        │      status='running', attempts+1
+             │        │
+             │        ├──── pg_try_advisory_lock  ──não obteve──> volta a 'queued'
+             │        │
+             │        ├──── descobrir credencial + sincronizar_conta()
+             │        │           │
+             │        │           └──> grava em ovh_sync_runs (linha própria)
+             │        │
+             │        └──── concluir: status='success'|'failed', sync_run_id
+```
+
+`FOR UPDATE SKIP LOCKED` é o que permite dois workers sem coordenação externa: o
+segundo pula a linha que o primeiro travou. Sem `SKIP LOCKED` eles serializariam e
+o segundo processaria o **mesmo** job depois do commit do primeiro — coleta
+duplicada, não concorrência.
+
+### Jobs órfãos
+
+Se o worker morre no meio, o job fica `running` para sempre — e aí o cadeado nº 2
+trabalha contra nós: um job preso impede **qualquer** novo job daquela conta, e o
+botão no portal passa a recusar coleta sem explicação.
+
+`reabrir_orfaos()` roda a cada execução do worker e devolve para a fila o que está
+`running` há mais de 30 minutos. Job que já gastou `MAX_TENTATIVAS` (3) vira
+`failed` em vez de voltar — sem limite, voltaria para sempre.
+
+Os 30 minutos são folgados de propósito: a coleta mais lenta observada é de ~70 s,
+e matar um job que apenas está demorando produziria coleta duplicada, que é pior
+do que esperar.
+
+### Processar a fila à mão
+
+```bash
+cd /opt/finops/ovh-collector
+
+# enfileirar sem passar pelo portal
+venv/bin/python processar_jobs.py --enfileirar ovh-main-ca
+
+# processar (o mesmo que o cron faz)
+./run-cloud-sync-jobs.sh
+
+# processar mais de um por vez
+venv/bin/python processar_jobs.py --max 5
+```
+
+Códigos de saída: `0` nada na fila ou tudo bem · `2` configuração ou migração 008
+ausente · `3` dependência · `6` algum job falhou · `75` outro worker rodando.
+
+### Validar `cloud_sync_jobs`
+
+```sql
+SELECT id, account_id, action, status, attempts,
+       requested_at, finished_at, sync_run_id,
+       left(coalesce(error_message,''), 60) AS erro
+  FROM cloud_sync_jobs
+ ORDER BY requested_at DESC
+ LIMIT 10;
+```
+
+O que olhar:
+
+- job em `queued` por mais de dois minutos → o cron do worker não está instalado;
+- `attempts` crescendo sem sair de `queued` → a conta está sempre travada, ou o
+  worker morre sempre no mesmo ponto;
+- `sync_run_id` nulo num job `success` → não deveria acontecer; indica que
+  `sincronizar_conta` não registrou execução (banco fora do ar no `abrir()`);
+- `error_message` **sempre** sanitizado. Se aparecer algo que se pareça com
+  credencial ali, é bug: reporte, não edite a linha.
+
+### Sem a migração 008
+
+Nada quebra. O worker sai com código 2 e a mensagem `fila ausente` — de propósito,
+e não com traceback: a cada minuto, traceback encheria o log e esconderia problema
+de verdade. No portal, o botão recusa com mensagem própria e **salvar credencial
+continua funcionando** — a fila é conveniência, e a ausência dela não pode impedir
+o cadastro.
+
+---
+
+## 11. Plano para descomissionar o fallback
 
 O fallback **não sai nesta release**, por decisão explícita. A ordem sugerida:
 
@@ -312,7 +509,7 @@ são apenas as chaves `OVH_*`.
 
 ---
 
-## 11. Limitações conhecidas
+## 12. Limitações conhecidas
 
 1. **O painel do portal ainda lê a "última execução" sem agregar por conta.** Com
    várias contas, a última pode ser a falha de uma enquanto as outras foram bem, e
@@ -329,4 +526,20 @@ são apenas as chaves `OVH_*`.
    deixa rastro de ter acontecido.
 6. **`--fechar-orfas` não distingue conta.** Ele encerra toda execução `running`
    antiga, de qualquer conta — o que é o desejado hoje, e ficaria errado se duas
-   execuções legítimas pudessem se sobrepor no tempo.
+   execuções legítimas pudessem se sobrepor no tempo. Note que ele agora *pode*
+   se sobrepor: o worker de fila e a coleta diária são processos distintos, e o
+   `--fechar-orfas` do wrapper roda antes da coleta diária. A janela de 180 min
+   dele é larga o suficiente para não alcançar um job em andamento, mas isso é
+   coincidência de folga, não garantia — se a coleta ficar mais lenta, revisitar.
+7. **Não há cancelamento de job.** A rota de fila expõe POST e GET, não DELETE:
+   marcar `cancelled` daria a impressão de interromper uma coleta que segue
+   correndo no host, porque o worker não verifica o status entre etapas. Um
+   cancelamento honesto exige essa verificação, que não está implementada.
+8. **A tela não atualiza sozinha.** O status do job é lido no clique de
+   *Atualizar status*. Polling automático foi deixado de fora de propósito: uma
+   tela de configuração aberta e esquecida geraria requisição indefinidamente
+   contra um banco compartilhado com o Metabase.
+9. **`attempts` não distingue causa.** Um job devolvido à fila por conta travada
+   e um devolvido por worker morto contam do mesmo jeito para `MAX_TENTATIVAS`.
+   Na prática o primeiro caso resolve no ciclo seguinte, mas três colisões
+   seguidas marcariam `failed` um job que nunca chegou a tentar coletar.

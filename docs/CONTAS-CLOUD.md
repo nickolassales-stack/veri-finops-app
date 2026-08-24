@@ -8,7 +8,7 @@ cadastráveis pela interface.
 
 | Seção | |
 |---|---|
-| [1. O que a tela faz](#1-o-que-a-tela-faz) · [2. AWS não tem credencial](#2-por-que-contas-aws-não-têm-bloco-de-credenciais) · [3. Cadastrar uma conta OVH](#3-como-cadastrar-uma-conta-ovh) · [4. Cifrado, não hash](#4-por-que-cifrado-e-não-hash) · [5. Como a cifragem funciona](#5-como-a-cifragem-funciona) · [6. RBAC](#6-quem-pode-o-quê) · [7. Testar conexão](#7-como-testar-a-conexão) · [8. Rotacionar](#8-como-rotacionar-uma-credencial) · [9. Rotacionar a chave de cifragem](#9-como-rotacionar-a-chave-de-cifragem) · [10. O collector](#10-como-o-collector-passa-a-consumir-credenciais-do-banco) · [11. Endpoints da API](#11-endpoints-da-api) · [12. Limitações](#12-limitações-conhecidas) | |
+| [1. O que a tela faz](#1-o-que-a-tela-faz) · [2. AWS não tem credencial](#2-por-que-contas-aws-não-têm-bloco-de-credenciais) · [3. Cadastrar uma conta OVH](#3-como-cadastrar-uma-conta-ovh) · [3.5. A primeira coleta](#35-a-primeira-coleta-pela-tela) · [4. Cifrado, não hash](#4-por-que-cifrado-e-não-hash) · [5. Como a cifragem funciona](#5-como-a-cifragem-funciona) · [6. RBAC](#6-quem-pode-o-quê) · [7. Testar conexão](#7-como-testar-a-conexão) · [8. Rotacionar](#8-como-rotacionar-uma-credencial) · [9. Rotacionar a chave de cifragem](#9-como-rotacionar-a-chave-de-cifragem) · [10. O collector](#10-como-o-collector-passa-a-consumir-credenciais-do-banco) · [11. Endpoints da API](#11-endpoints-da-api) · [12. Limitações](#12-limitações-conhecidas) | |
 
 ---
 
@@ -102,6 +102,62 @@ indisponibilidade do provedor impedir o cadastro.
 Depois de salvar, o status volta para **Não configurado** — credencial nova nunca
 foi testada, e manter "Conectado" da anterior faria a tela afirmar algo que
 ninguém verificou.
+
+---
+
+## 3.5. A primeira coleta, pela tela
+
+**Salvar e executar primeira coleta** faz três coisas, nesta ordem: grava a
+credencial, testa contra a OVH e enfileira a coleta.
+
+A ordem é o desenho. Enfileirar sem testar criaria um job destinado a falhar, e a
+tela mostraria "coleta enfileirada" seguida de erro alguns minutos depois — testar
+primeiro troca isso por um erro imediato, com a causa em mãos. E salvar acontece de
+todo jeito: se a OVH estiver fora do ar, a credencial fica gravada e só o disparo é
+recusado. Perder o que foi digitado por causa de uma indisponibilidade do provedor
+seria o pior desfecho.
+
+### O botão não executa nada
+
+Ele **insere uma linha** em `cloud_sync_jobs`. Um worker no servidor
+(`run-cloud-sync-jobs.sh`, por cron a cada minuto) atende a fila.
+
+O portal roda num container que não alcança o venv do collector nem o filesystem
+do host, e dar-lhe qualquer um dos dois significaria montar diretório do host num
+processo que atende requisição HTTP pública. Executar shell a partir de rota HTTP é
+exatamente o que a fila existe para evitar.
+
+Consequência prática para quem opera: **a coleta não é instantânea.** A tela mostra
+`coleta enfileirada` e o status muda quando o worker pega o job. *Atualizar status*
+relê — não há polling automático, de propósito: uma tela de configuração aberta e
+esquecida geraria requisição indefinidamente contra um banco que o Metabase também
+usa.
+
+### O que a tela mostra
+
+| Estado | Significado |
+|---|---|
+| `coleta enfileirada` | job em `queued` — o worker ainda não pegou |
+| `coleta em execução` | job em `running` |
+| `coleta concluída` | `success`, com o `ovh_sync_runs.id` ao lado |
+| `coleta falhou` | `failed`, com o erro **sanitizado** |
+
+Clicar duas vezes é seguro: o índice único parcial da migração 008 garante no
+máximo um job vivo por conta, e a segunda chamada devolve o job existente com
+`criado: false` em vez de erro — o pedido *foi* atendido.
+
+### Se a migração 008 não foi aplicada
+
+O botão recusa com mensagem própria e **salvar credencial continua funcionando**. A
+fila é conveniência; a ausência dela não pode impedir o cadastro. Nesse caso, colete
+à mão:
+
+```bash
+cd /opt/finops/ovh-collector && ./run-ovh-etl.sh manual --account <id>
+```
+
+Mecânica completa da fila, dos três cadeados e do worker em
+[ovh-collector-multiconta.md](ovh-collector-multiconta.md), seção 10.
 
 ---
 
@@ -419,6 +475,8 @@ Todos exigem sessão. Os três de credencial exigem **papel ADMIN**.
 | PUT | `/api/admin/accounts/:id/credentials` | ADMIN |
 | DELETE | `/api/admin/accounts/:id/credentials` | ADMIN |
 | POST | `/api/admin/accounts/:id/credentials/test` | ADMIN |
+| POST | `/api/admin/accounts/:id/credentials/sync` | ADMIN — enfileira coleta |
+| GET | `/api/admin/accounts/:id/credentials/sync` | ADMIN — job vivo + último |
 
 `PUT` e não `PATCH` porque as três partes e o endpoint formam uma **unidade**:
 trocar a application key mantendo o secret antigo não produz credencial
@@ -429,6 +487,11 @@ semântica HTTP.
 O teste responde **200 mesmo quando falha**. A requisição foi bem atendida: o
 portal perguntou à OVH e obteve resposta. Devolver 4xx faria o cliente tratar
 como falha de chamada e perder a mensagem, que aqui é o produto.
+
+A rota de fila **não tem DELETE**. Marcar um job `cancelled` daria a impressão de
+interromper uma coleta que segue correndo no host, porque o worker não verifica o
+status entre etapas. Um cancelamento honesto exige essa verificação, e ela não
+está implementada.
 
 ### O que nunca sai destas rotas
 

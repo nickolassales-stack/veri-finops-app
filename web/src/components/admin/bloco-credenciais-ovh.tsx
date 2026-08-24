@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Botao } from "@/components/ui/botao";
 import { Campo, Selecao } from "@/components/ui/campo";
 import { ErroDoBloco } from "@/components/ui/estado";
-import { escrever, escreverComMeta, mensagemDoErro, remover } from "@/lib/admin/cliente";
+import { escrever, escreverComMeta, ler, mensagemDoErro, remover } from "@/lib/admin/cliente";
 import {
   ENDPOINTS_OVH,
   ROTULO_ENDPOINT,
@@ -35,6 +35,24 @@ import {
  * Sem essa regra, abrir o formulario para trocar o endpoint e salvar apagaria a
  * credencial: os tres campos chegariam em branco ao servidor.
  */
+
+/** Espelha `JobSync` de lib/queries/admin/jobs-sync.ts. Sem segredo algum. */
+export type JobColeta = {
+  id: string;
+  status: "queued" | "running" | "success" | "failed" | "cancelled";
+  requestedAt: string;
+  finishedAt: string | null;
+  errorMessage: string | null;
+  syncRunId: string | null;
+};
+
+const ROTULO_JOB: Record<JobColeta["status"], string> = {
+  queued: "coleta enfileirada",
+  running: "coleta em execução",
+  success: "coleta concluída",
+  failed: "coleta falhou",
+  cancelled: "coleta cancelada",
+};
 
 export type CredencialVisivel = {
   accountId: string;
@@ -116,6 +134,9 @@ export function BlocoCredenciaisOvh({
   const [aviso, setAviso] = useState<string | null>(null);
   const [teste, setTeste] = useState<ResultadoTeste | null>(null);
   const [salvo, setSalvo] = useState(false);
+  const [enfileirando, setEnfileirando] = useState(false);
+  const [job, setJob] = useState<JobColeta | null>(null);
+  const [jobAviso, setJobAviso] = useState<string | null>(null);
 
   const base = `/api/admin/accounts/${encodeURIComponent(accountId)}/credentials`;
 
@@ -181,6 +202,97 @@ export function BlocoCredenciaisOvh({
       setErro(mensagemDoErro(e));
     } finally {
       setTestando(false);
+    }
+  }
+
+  /**
+   * Salva, testa e enfileira -- nessa ordem, e a ordem importa.
+   *
+   * Enfileirar sem testar criaria um job destinado a falhar, e a tela mostraria
+   * "coleta enfileirada" seguida de erro alguns minutos depois. Testar primeiro
+   * troca isso por um erro imediato, com a causa em maos.
+   *
+   * Salvar acontece de todo jeito. Se a OVH estiver fora do ar, a credencial fica
+   * gravada e so o disparo e recusado: perder o que foi digitado por causa de uma
+   * indisponibilidade do provedor seria o pior desfecho.
+   */
+  async function salvarEColetar() {
+    setEnfileirando(true);
+    setErro(null);
+    setAviso(null);
+    setSalvo(false);
+    setTeste(null);
+    setJobAviso(null);
+
+    try {
+      const corpoAtual = corpo();
+
+      const gravada = await escreverComMeta<
+        CredencialVisivel,
+        { avisoContasDuplicadas?: string[] }
+      >(base, "PUT", corpoAtual);
+      limparCampos();
+      setSalvo(true);
+      aoMudar(gravada.dados);
+
+      // Testa com os valores DIGITADOS, nao com os campos ja limpos: `corpoAtual`
+      // foi capturado antes de `limparCampos`.
+      const resultado = await escrever<ResultadoTeste>(
+        `${base}/test`,
+        "POST",
+        corpoAtual,
+      );
+      setTeste(resultado);
+      if (resultado.credencial) aoMudar(resultado.credencial);
+
+      if (!resultado.ok) {
+        setJobAviso(
+          "Credenciais salvas, mas a OVH recusou a conexão — a coleta não foi " +
+            "enfileirada. Corrija a credencial e tente de novo.",
+        );
+        return;
+      }
+
+      const { job: criadoJob, criado } = await escrever<{
+        job: JobColeta;
+        criado: boolean;
+      }>(`${base}/sync`, "POST", { action: "first_sync" });
+      setJob(criadoJob);
+      setJobAviso(
+        criado
+          ? null
+          : "Já havia uma coleta na fila para esta conta; o pedido foi atendido pela existente.",
+      );
+    } catch (e) {
+      setErro(mensagemDoErro(e));
+    } finally {
+      setEnfileirando(false);
+    }
+  }
+
+  /** Le o estado atual da fila. Chamado a mao pelo botao "Atualizar". */
+  async function atualizarJob() {
+    try {
+      // `ler` devolve o envelope `{ dados, meta }` -- ao contrario de `escrever`,
+      // que ja desembrulha.
+      const { dados: estado } = await ler<{
+        ativo: JobColeta | null;
+        ultimo: JobColeta | null;
+        disponivel: boolean;
+      }>(`${base}/sync`);
+      if (!estado.disponivel) {
+        setJobAviso(
+          "A fila de coleta não existe neste ambiente (migração 008 não aplicada).",
+        );
+        return;
+      }
+      // Ativo primeiro: enquanto um job esta na fila, o ultimo resultado ainda e
+      // o da execucao ANTERIOR, e mostrar o ultimo faria a tela dizer "falhou"
+      // durante uma coleta que esta correndo bem.
+      setJob(estado.ativo ?? estado.ultimo);
+      setJobAviso(null);
+    } catch (e) {
+      setJobAviso(mensagemDoErro(e));
     }
   }
 
@@ -382,9 +494,61 @@ export function BlocoCredenciaisOvh({
           </p>
         )}
 
+        {jobAviso && (
+          <p
+            role="status"
+            className="rounded-lg border border-veri-mostarda/40 bg-veri-mostarda/10 px-4 py-2 text-xs leading-relaxed text-veri-verde-escuro"
+          >
+            {jobAviso}
+          </p>
+        )}
+
+        {job && (
+          <div
+            role="status"
+            className={`rounded-lg border px-4 py-3 text-sm leading-relaxed ${
+              job.status === "success"
+                ? "border-veri-verde/40 bg-veri-verde/10 text-veri-verde-escuro"
+                : job.status === "failed" || job.status === "cancelled"
+                  ? "border-veri-vinho/30 bg-veri-vinho/5 text-veri-vinho"
+                  : "border-veri-mostarda/40 bg-veri-mostarda/10 text-veri-verde-escuro"
+            }`}
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <strong>{ROTULO_JOB[job.status]}</strong>
+              <span className="veri-numero text-xs text-texto-suave">
+                job {job.id}
+                {job.syncRunId && ` · ovh_sync_runs ${job.syncRunId}`}
+              </span>
+            </div>
+            {(job.status === "queued" || job.status === "running") && (
+              <p className="mt-1 text-xs leading-relaxed">
+                O worker no servidor processa a fila a cada minuto. Esta tela não
+                atualiza sozinha — use <strong>Atualizar status</strong>.
+              </p>
+            )}
+            {job.errorMessage && (
+              <p className="mt-1 text-xs leading-relaxed">{job.errorMessage}</p>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-3">
           <Botao type="submit" carregando={salvando}>
             Salvar credenciais
+          </Botao>
+          <Botao
+            type="button"
+            carregando={enfileirando}
+            onClick={() => void salvarEColetar()}
+            // Mesma regra do teste: sem cadastro e sem os tres campos nao ha o que
+            // salvar nem o que coletar.
+            disabled={
+              !configurada &&
+              !(appKey.trim() && appSecret.trim() && consumerKey.trim())
+            }
+          >
+            Salvar e executar primeira coleta
           </Botao>
           <Botao
             type="button"
@@ -403,6 +567,15 @@ export function BlocoCredenciaisOvh({
           {configurada && (
             <Botao
               type="button"
+              tom="secundario"
+              onClick={() => void atualizarJob()}
+            >
+              Atualizar status
+            </Botao>
+          )}
+          {configurada && (
+            <Botao
+              type="button"
               tom="perigo"
               carregando={removendo}
               onClick={() => void apagar()}
@@ -418,8 +591,11 @@ export function BlocoCredenciaisOvh({
         para esta tela — só a máscara dos quatro últimos caracteres. A chave de cifragem
         vive no ambiente do servidor, não no banco.{" "}
         <strong>Última sincronização</strong> vem de{" "}
-        <span className="veri-numero">ovh_sync_runs</span> e é do collector, não desta
-        tela: cadastrar credencial aqui não dispara coleta.
+        <span className="veri-numero">ovh_sync_runs</span> e é do collector.{" "}
+        <strong>Salvar credenciais</strong> não dispara coleta;{" "}
+        <strong>Salvar e executar primeira coleta</strong> enfileira um pedido em{" "}
+        <span className="veri-numero">cloud_sync_jobs</span> que o worker do servidor
+        atende — esta tela nunca executa comando.
       </p>
     </section>
   );

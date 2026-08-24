@@ -19,6 +19,14 @@ import type { EntradaCredencialOvh } from "@/lib/filtros/esquemas-credenciais";
 import { ehEndpointOvh, type EndpointOvh } from "@/lib/ovh/endpoints";
 import { sanitizar, validarCredencialOvh } from "@/lib/ovh/api";
 import {
+  enfileirarColeta,
+  filaDisponivel,
+  jobAtivoDaConta,
+  ultimoJobDaConta,
+  type AcaoJob,
+  type JobSync,
+} from "@/lib/queries/admin/jobs-sync";
+import {
   apagarCredencial,
   contasComMesmaChave,
   credenciaisDisponiveis,
@@ -471,4 +479,91 @@ export async function deleteOvhCredentials(
   await exigirTabela();
   await exigirContaOvh(accountId);
   return { removida: await apagarCredencial(accountId) };
+}
+
+
+// ============================================================ primeira coleta
+
+export type ResultadoEnfileiramento = {
+  job: JobSync;
+  /** `false` quando ja havia job vivo para a conta -- o pedido foi atendido. */
+  criado: boolean;
+};
+
+/**
+ * Enfileira uma coleta para a conta. NAO executa nada.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE ISTO NAO RODA O COLLECTOR
+ *
+ * O portal roda no container `finops-portal`; o collector roda no HOST, com venv
+ * proprio. O container nao tem o filesystem do host montado nem o interpretador
+ * do collector -- e dar-lhe qualquer um dos dois significaria expor diretorio do
+ * host a um processo que atende requisicao HTTP publica.
+ *
+ * Entao esta funcao INSERE UMA LINHA. Um worker no host
+ * (`scripts/ovh-collector/processar_jobs.py`, chamado por cron a cada minuto) le
+ * a linha e trabalha. A fronteira de confianca fica no banco, que os dois lados
+ * ja acessam.
+ *
+ * ---------------------------------------------------------------------------
+ * O QUE ACONTECE SEM A MIGRACAO 008
+ *
+ * Recusa com `banco-indisponivel` e mensagem propria -- e nada mais para. Salvar
+ * e testar credencial NAO dependem desta tabela, de proposito: a fila e uma
+ * conveniencia, e a ausencia dela nao pode impedir o cadastro.
+ */
+export async function triggerOvhFirstSync(
+  accountId: string,
+  usuarioId: string,
+  action: AcaoJob = "first_sync",
+): Promise<ResultadoEnfileiramento> {
+  await exigirContaOvh(accountId);
+
+  if (!(await filaDisponivel())) {
+    throw new ErroDeApi(
+      "banco-indisponivel",
+      "A fila de coleta ainda nao existe neste ambiente. Rode " +
+        "scripts/migrations/008-cloud-sync-jobs.sql. A credencial continua salva; " +
+        "so o disparo automatico esta indisponivel -- rode a coleta a mao com " +
+        "./run-ovh-etl.sh manual --account " +
+        accountId +
+        " .",
+    );
+  }
+
+  // Enfileirar SEM credencial cadastrada criaria um job destinado a falhar, e a
+  // tela mostraria "coleta enfileirada" seguida de erro alguns minutos depois --
+  // pior do que recusar agora, com a causa em maos.
+  const credencial = await getCredencialEnvelope(accountId);
+  if (credencial === null) {
+    throw new ErroDeApi(
+      "parametros-invalidos",
+      "Esta conta nao tem credencial cadastrada. Salve as credenciais antes de " +
+        "pedir a primeira coleta.",
+    );
+  }
+
+  return enfileirarColeta(accountId, action, usuarioId);
+}
+
+/**
+ * O que a tela mostra sobre coleta: o job vivo, se houver, e o ultimo resultado.
+ *
+ * Os dois, e nao apenas o ultimo: enquanto um job esta `queued`, o ultimo
+ * resultado ainda e o da execucao ANTERIOR, e mostrar so um dos dois faria a tela
+ * dizer "falhou" durante uma coleta que esta correndo bem, ou esconder que existe
+ * coleta em andamento.
+ */
+export async function getOvhSyncJobStatus(
+  accountId: string,
+): Promise<{ ativo: JobSync | null; ultimo: JobSync | null; disponivel: boolean }> {
+  if (!(await filaDisponivel())) {
+    return { ativo: null, ultimo: null, disponivel: false };
+  }
+  const [ativo, ultimo] = await Promise.all([
+    jobAtivoDaConta(accountId),
+    ultimoJobDaConta(accountId),
+  ]);
+  return { ativo, ultimo, disponivel: true };
 }

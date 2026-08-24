@@ -90,3 +90,20 @@ export const esquemaTesteCredencialOvh = esquemaCredencialOvh;
  * substituir cada segredo -- as duas sao a mesma regra vista de dois angulos, e
  * separa-las convidaria a corrigir uma e esquecer a outra.
  */
+
+/**
+ * Corpo do pedido de coleta.
+ *
+ * `action` tem padrao em vez de ser obrigatorio: o caso principal e o botao da
+ * tela, que sempre pede `first_sync`, e exigir o campo faria o cliente repetir
+ * uma constante. `.strict()` continua valendo -- campo desconhecido e recusado,
+ * para que uma tentativa de mandar `status: "success"` daqui nao passe em
+ * silencio.
+ */
+export const esquemaEnfileirarColeta = z
+  .object({
+    action: z.enum(["first_sync", "manual_sync"]).default("first_sync"),
+  })
+  .strict();
+
+export type EntradaEnfileirarColeta = z.output<typeof esquemaEnfileirarColeta>;

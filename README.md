@@ -18,7 +18,7 @@ substituir nem alterar nenhum dos dois.
 | [docs/](docs/) | Runbook, schema real do banco, decisões de visualização, brandbook VERI |
 | [assets/logos/](assets/logos/) | Identidade visual VERI |
 
-- **[docs/ovh-collector-multiconta.md](docs/ovh-collector-multiconta.md)** — collector OVH lendo credenciais do banco: descoberta de contas, coleta isolada por conta, codigos de saida, fallback e plano de descomissionamento
+- **[docs/ovh-collector-multiconta.md](docs/ovh-collector-multiconta.md)** — collector OVH lendo credenciais do banco: descoberta por conta, uniao banco+legado, coleta isolada, fila `cloud_sync_jobs`, worker, os tres cadeados, codigos de saida e plano de descomissionamento
 - **[docs/CONTAS-CLOUD.md](docs/CONTAS-CLOUD.md)** — Contas Cloud: cadastro multi-provedor, credenciais OVH cifradas, por que cifrado e não hash, rotação e o contrato de leitura do collector
 - **[docs/RUNBOOK-app.md](docs/RUNBOOK-app.md)** — deploy detalhado, role do banco, riscos
 - **[docs/homologacao-multicloud.md](docs/homologacao-multicloud.md)** — homologação do deploy multi-provider (`f08a383`, 20/08/2026): checklist com atribuição por observador, o que automação não alcança e o rollback
@@ -41,6 +41,7 @@ Banco e carga:
 | [scripts/migrations/005-ovh-collector.sql](scripts/migrations/005-ovh-collector.sql) | Tabelas `ovh_*` do segundo provedor. Aditiva, não toca em nada da AWS. **Reversível** ([rollback](scripts/migrations/005-ovh-collector-rollback.sql)) |
 | [scripts/migrations/006-credenciais-provedor.sql](scripts/migrations/006-credenciais-provedor.sql) | `cloud_provider_credentials`: credencial de API por conta, cifrada em AES-256-GCM. Aditiva. **Reversível** ([rollback](scripts/migrations/006-credenciais-provedor-rollback.sql)) — mas o dado foi digitado a partir do console da OVH e **não é regenerável pelo sistema** |
 | [scripts/migrations/007-sync-runs-por-conta.sql](scripts/migrations/007-sync-runs-por-conta.sql) | `ovh_sync_runs.provider_account_id`: uma linha de execucao por conta OVH. Aditiva, coluna nullable. **Reversivel** ([rollback](scripts/migrations/007-sync-runs-por-conta-rollback.sql)) |
+| [scripts/migrations/008-cloud-sync-jobs.sql](scripts/migrations/008-cloud-sync-jobs.sql) | `cloud_sync_jobs`: fila de coleta entre o portal (que insere) e o collector no host (que processa). O indice unico parcial e o cadeado que impede fila dupla por conta. Aditiva. **Reversivel** ([rollback](scripts/migrations/008-cloud-sync-jobs-rollback.sql)) — apaga o historico de pedidos, nao a coleta: custo, fatura e `ovh_sync_runs` sobrevivem |
 | [scripts/etl/athena_to_postgres.py](scripts/etl/athena_to_postgres.py) | Carga Athena → PostgreSQL. Roda na EC2, em `/opt/finops/etl/` |
 | [scripts/backfill-billing-period.py](scripts/backfill-billing-period.py) | Preenche o período de cobrança nas linhas já carregadas |
 | [scripts/reconciliacao-cost-explorer.sql](scripts/reconciliacao-cost-explorer.sql) | Confere o portal contra o AWS Cost Explorer |

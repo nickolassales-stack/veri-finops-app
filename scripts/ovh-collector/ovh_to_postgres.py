@@ -79,6 +79,7 @@ from typing import Any
 # `contas_ovh` vive ao lado deste arquivo. Funciona porque o Python coloca o
 # diretorio do SCRIPT em sys.path[0] -- vale tanto para
 # `python /opt/finops/ovh-collector/ovh_to_postgres.py` quanto para o wrapper.
+from jobs_ovh import TravaConta
 from contas_ovh import (
     ContaOvh,
     Descoberta,
@@ -660,11 +661,14 @@ def sincronizar_conta(
     source: str,
     log_path: str | None,
     dry_run: bool,
-) -> tuple[bool, dict[str, int], str | None]:
+) -> tuple[bool, dict[str, int], str | None, int | None]:
     """
     Coleta e grava UMA conta, isolada.
 
-    Devolve `(ok, contagens, erro_sanitizado)`. NUNCA levanta: o laco de fora
+    Devolve `(ok, contagens, erro_sanitizado, ovh_sync_runs.id)`. O id volta
+    para que o worker de fila possa ligar o job a execucao que ele produziu --
+    sem ele, a tela mostraria "coleta concluida" sem conseguir dizer o que foi
+    coletado. NUNCA levanta: o laco de fora
     precisa seguir para a proxima conta, e uma excecao vazando daqui pararia a
     coleta das demais -- justamente o que a isolacao existe para impedir.
 
@@ -707,7 +711,7 @@ def sincronizar_conta(
                 "faturas": len(dados["faturas"]),
                 "custos": len(dados["custos"]),
                 "linhas": 0,
-            }, None
+            }, None, execucao.id
 
         conexao = conectar_banco(cfg)
         try:
@@ -719,13 +723,13 @@ def sincronizar_conta(
             f"projetos={contagens['projetos']} faturas={contagens['faturas']} "
             f"linhas_fatura={contagens['linhas']} custos={contagens['custos']}")
         execucao.fechar("success", contagens)
-        return True, contagens, None
+        return True, contagens, None, execucao.id
 
     except Exception as exc:
         msg = sanitizar_erro(exc)
         log(f"  {conta.provider_account_id}: FALHA -- {msg}")
         execucao.fechar("failed", contagens, msg)
-        return False, contagens, msg
+        return False, contagens, msg, execucao.id
 
 
 # --------------------------------------------------------------------- main
@@ -815,21 +819,65 @@ def main() -> int:
         f"{resumo_para_log(descoberta.contas)}")
 
     falhas: list[str] = []
+    puladas: list[str] = []
     total = {"contas": 0, "projetos": 0, "custos": 0, "faturas": 0, "linhas": 0}
 
-    for conta in descoberta.contas:
-        ok, contagens, _erro = sincronizar_conta(
-            conta, base, args.source, args.log_path, args.dry_run
-        )
-        for chave in total:
-            total[chave] += contagens.get(chave, 0)
-        if not ok:
-            falhas.append(conta.provider_account_id)
+    # Conexao dedicada so para os locks consultivos. Dedicada porque o lock e por
+    # SESSAO, e a conexao de dados abre e fecha varias vezes durante a coleta --
+    # o que soltaria o lock no meio.
+    #
+    # Em `--dry-run` nao ha lock: dry-run nao grava, entao rodar junto com uma
+    # coleta real e inofensivo, e tomar o lock atrapalharia a coleta de verdade.
+    conexao_trava = None
+    if not args.dry_run:
+        try:
+            conexao_trava = conectar_banco(base, autocommit=True)
+        except Exception as exc:
+            log(
+                f"aviso: sem conexao para lock ({sanitizar_erro(exc)}); "
+                "seguindo sem exclusao mutua"
+            )
+
+    try:
+        for conta in descoberta.contas:
+            cid = conta.provider_account_id
+
+            if conexao_trava is not None:
+                trava = TravaConta(conexao_trava, cid)
+                with trava:
+                    if not trava.obtida:
+                        # Outro processo -- provavelmente o worker de fila -- esta
+                        # coletando esta conta agora. Pular NAO e falha: a coleta
+                        # esta acontecendo, so nao aqui. Contar como falha faria o
+                        # cron alarmar por causa de uma coleta bem-sucedida.
+                        log(f"  {cid}: pulada, ja esta sendo coletada por outro processo")
+                        puladas.append(cid)
+                        continue
+                    ok, contagens, _erro, _run = sincronizar_conta(
+                        conta, base, args.source, args.log_path, args.dry_run
+                    )
+            else:
+                ok, contagens, _erro, _run = sincronizar_conta(
+                    conta, base, args.source, args.log_path, args.dry_run
+                )
+
+            for chave in total:
+                total[chave] += contagens.get(chave, 0)
+            if not ok:
+                falhas.append(cid)
+    finally:
+        if conexao_trava is not None:
+            try:
+                conexao_trava.close()
+            except Exception:
+                pass
 
     # Resumo SEM SEGREDO: ids, contagens e quem falhou. Nenhum campo de credencial.
     log("--- resumo ---")
-    log(f"contas processadas: {len(descoberta.contas)}  "
-        f"sucesso: {len(descoberta.contas) - len(falhas)}  falhas: {len(falhas)}")
+    processadas = len(descoberta.contas) - len(puladas)
+    log(f"contas processadas: {processadas}  "
+        f"sucesso: {processadas - len(falhas)}  falhas: {len(falhas)}  "
+        f"puladas (em coleta): {len(puladas)}")
     log(f"totais: projetos={total['projetos']} faturas={total['faturas']} "
         f"linhas_fatura={total['linhas']} custos={total['custos']}")
     if falhas:
