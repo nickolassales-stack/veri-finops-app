@@ -167,14 +167,78 @@ export const camposMoedaOvh = {
  *
  * Vazio vira `undefined` = todas as contas. O mesmo tratamento de `projeto`.
  */
-export const camposContaOvh = {
+const ID_CONTA = /^[A-Za-z0-9_-]{1,20}$/;
+
+/** Teto de contas por consulta -- um `IN` com centenas de ids e URL montada a mao. */
+export const MAX_CONTAS_FILTRO = 50;
+
+/**
+ * `?conta=` -- UMA OU MAIS contas, separadas por virgula.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE `conta` E NAO `contas`
+ *
+ * `contas` JA EXISTE, e e o filtro de contas da visao AWS (`filtros.ts`). As
+ * duas visoes moram no mesmo caminho `/dashboard`, entao o mesmo nome com
+ * significados diferentes -- id de 12 digitos da AWS de um lado, etiqueta
+ * `ovh-cliente-ca` do outro -- faria uma URL colada de uma visao aplicar um
+ * recorte silencioso na outra. O id AWS casa com o formato do id OVH, entao a
+ * validacao nao pegaria: a tela mostraria custo zero como se fosse resposta.
+ *
+ * Ha um teste que guarda exatamente essa separacao, e foi ele que apontou a
+ * colisao quando este filtro nasceu como `contas`.
+ *
+ * Manter o nome no singular tem um segundo beneficio: `?conta=ovh-main-ca`, a
+ * forma antiga de valor unico, continua valendo SEM CAMADA DE COMPATIBILIDADE --
+ * um id sozinho ja e uma lista de um item.
+ *
+ * ---------------------------------------------------------------------------
+ * VIRGULA, E NAO REPETICAO DO PARAMETRO
+ *
+ * `lerParametros` -- que o resto do projeto usa -- devolve apenas a PRIMEIRA
+ * ocorrencia de um parametro repetido. Um `?conta=a&conta=b` chegaria aqui como
+ * `"a"`, e a segunda conta sumiria do recorte sem erro nenhum.
+ *
+ * VAZIO SIGNIFICA TODAS. Distinguir "nenhuma conta" de "todas" nao tem uso: uma
+ * tela que nao mostra conta alguma nao e um recorte.
+ */
+export const camposContasOvh = {
   conta: z
     .string()
     .trim()
-    .max(20, "Identificador de conta muito longo (maximo 20 caracteres).")
-    .regex(/^[A-Za-z0-9_-]*$/, "Identificador de conta invalido.")
-    .transform((v) => (v === "" ? undefined : v))
-    .optional(),
+    .max(20 * MAX_CONTAS_FILTRO + MAX_CONTAS_FILTRO, "Lista de contas muito longa.")
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return undefined;
+      const ids = [
+        ...new Set(
+          v
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s !== ""),
+        ),
+      ];
+      return ids.length === 0 ? undefined : ids;
+    })
+    .superRefine((ids, ctx) => {
+      if (ids === undefined) return;
+      if (ids.length > MAX_CONTAS_FILTRO) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Selecione no maximo ${MAX_CONTAS_FILTRO} contas.`,
+        });
+        return;
+      }
+      for (const id of ids) {
+        if (!ID_CONTA.test(id)) {
+          ctx.addIssue({
+            code: "custom",
+            message: `Identificador de conta invalido: "${id}".`,
+          });
+          return;
+        }
+      }
+    }),
 };
 
 // ----------------------------------------------------------------- esquemas
@@ -183,10 +247,10 @@ export const esquemaDashboardOvh = z
   .object({
     ...camposPeriodoMensal,
     ...camposFonteOvhComPadrao,
-    ...camposContaOvh,
+    ...camposContasOvh,
     ...camposProjetoOvh,
     ...camposMoedaOvh,
   })
   .superRefine(regrasPeriodoMensal);
 
-export type EntradaDashboardOvh = z.infer<typeof esquemaDashboardOvh>;
+export type EntradaDashboardOvh = z.output<typeof esquemaDashboardOvh>;

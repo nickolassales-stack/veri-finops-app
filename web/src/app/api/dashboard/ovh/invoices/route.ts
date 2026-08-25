@@ -27,10 +27,13 @@ export const GET = rotaComPermissao(
   "GET /api/dashboard/ovh/invoices",
   "dashboard:view",
   async ({ url, tz }) => {
-    const { periodo, estado, meta } = await resolverFiltroOvh(url, tz);
+    const { entrada, periodo, estado, meta } = await resolverFiltroOvh(url, tz);
 
+    // A fatura nao tem `source` nem projeto, mas TEM conta: sem repassar
+    // `contas`, esta lista mostraria faturas de contas que o usuario tirou do
+    // recorte, e os totais da tela nao bateriam com as linhas exibidas.
     const { itens, semMesAtribuido } = await getFaturasOvh(
-      { deMes: periodo.deMes, ateMes: periodo.ateMes },
+      { deMes: periodo.deMes, ateMes: periodo.ateMes, contas: entrada.conta },
       LIMITE,
     );
 

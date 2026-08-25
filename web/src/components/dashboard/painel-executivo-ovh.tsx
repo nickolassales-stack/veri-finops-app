@@ -12,6 +12,7 @@ import { Carregando, ErroDoBloco, Vazio } from "@/components/ui/estado";
 import { Num, VisaoTabela } from "@/components/ui/visao-tabela";
 import {
   descreverFiltrosOvh,
+  descreverPeriodoOvh,
   escreverFiltrosOvh,
   lerFiltrosOvh,
   validarIntervaloOvh,
@@ -120,6 +121,15 @@ export function PainelExecutivoOvh({ tz }: { tz: string }) {
     [moeda],
   );
 
+  // A lista de contas vem do meta de QUALQUER endpoint (todos passam pelo mesmo
+  // resolvedor). `resumo` primeiro porque e o que sempre carrega; os demais
+  // servem de reserva se aquele falhar sozinho.
+  const contasDisponiveis =
+    meta?.contasDisponiveis ??
+    dados.metaProjetos?.contasDisponiveis ??
+    dados.metaServicos?.contasDisponiveis ??
+    [];
+
   const projetosDisponiveis = dados.metaProjetos?.projetosDisponiveis ?? [];
   const nomeDoProjeto =
     projetosDisponiveis.find((p) => p.servicoDoProjeto === filtros.projeto)?.nome ?? null;
@@ -159,6 +169,7 @@ export function PainelExecutivoOvh({ tz }: { tz: string }) {
       <FiltrosOvhBarra
         filtros={filtros}
         problema={problema}
+        contas={contasDisponiveis}
         projetos={projetosDisponiveis}
         fontesComDado={meta?.disponibilidade.fontesComDado ?? []}
         carregando={dados.carregando}
@@ -173,21 +184,18 @@ export function PainelExecutivoOvh({ tz }: { tz: string }) {
       >
         <p className="text-veri-verde-escuro">
           <span className="text-texto-suave">Período analisado: </span>
+          {/* A frase inteira sai de `descreverPeriodoOvh`, um modulo puro com
+              teste. O plural de "mês/meses" e a janela em meses moram la porque
+              a mesma frase aparece no Analitico -- duas montagens divergiriam. */}
           <strong className="veri-numero font-medium">
-            {meta ? `${meta.periodo.deMes} a ${meta.periodo.ateMes}` : "—"}
+            {meta ? descreverPeriodoOvh(meta.periodo) : "—"}
           </strong>
-          {meta && (
-            <span className="text-texto-suave">
-              {" "}
-              · {formatInteiro(meta.periodo.meses)} mês(es) · {meta.periodo.rotulo}
-            </span>
-          )}
           {problema && (
             <span className="text-veri-vinho"> · intervalo informado é inválido</span>
           )}
         </p>
         <p className="text-texto-suave">
-          {descreverFiltrosOvh(filtros, nomeDoProjeto)}
+          {descreverFiltrosOvh(filtros, nomeDoProjeto, contasDisponiveis)}
           {meta?.geradoEm && (
             <span className="hidden sm:inline">
               {" "}
@@ -260,6 +268,7 @@ export function PainelExecutivoOvh({ tz }: { tz: string }) {
         meta={meta}
         carregando={dados.carregando}
         tz={tz}
+        contasSelecionadas={filtros.contas}
       />
 
       {dados.resumo.erro && !dados.resumo.erro.exigeLogin && (

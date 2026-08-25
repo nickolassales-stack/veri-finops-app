@@ -77,7 +77,13 @@ export async function getLinhasExportOvh(f: FiltroOvh): Promise<LinhaExportOvh[]
     `c.source = ${p.add(f.source)}`,
     `c.currency = ${p.add(f.moeda)}`,
   ];
-  if (f.conta !== undefined) condicoes.push(`c.provider_account_id = ${p.add(f.conta)}`);
+  // Mesma forma do dashboard: array parametrizado, e nao `IN` interpolado. O
+  // export precisa recortar pelas MESMAS contas da tela -- um arquivo com mais
+  // contas do que o usuario via na hora de exportar e a pior divergencia
+  // possivel, porque so aparece depois, na planilha.
+  if (f.contas !== undefined && f.contas.length > 0) {
+    condicoes.push(`c.provider_account_id = ANY(${p.add(f.contas)}::text[])`);
+  }
   if (f.projeto !== undefined) condicoes.push(`c.project_service_name = ${p.add(f.projeto)}`);
 
   const lim = p.add(LIMITE_LINHAS + 1);

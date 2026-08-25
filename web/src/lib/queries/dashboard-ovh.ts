@@ -1,6 +1,8 @@
 import "server-only";
 
 import { ConstrutorParams, query, queryOne } from "@/lib/database";
+
+import { aliasDisponivel } from "./alias-conta";
 import type { FonteOvh } from "@/lib/filtros/esquemas";
 import { toNumber } from "@/lib/format";
 
@@ -49,8 +51,19 @@ export type FiltroOvh = {
   ateMes: string;
   /** Origem do custo. Obrigatoria -- ver regra 1 no cabecalho. */
   source: FonteOvh;
-  /** `provider_account_id`. `undefined` = todas as contas OVH. */
-  conta?: string;
+  /**
+   * `provider_account_id`. `undefined` = TODAS as contas OVH.
+   *
+   * "Todas" nao vira lista explicita de contas ativas de proposito.
+   * `ovh_monthly_costs` so contem linha OVH -- e a tabela do collector OVH, e
+   * nenhuma consulta deste modulo toca tabela AWS --, entao a ausencia de
+   * filtro nao pode trazer dado de outro provedor.
+   *
+   * Resolver "todas" para a lista de contas ATIVAS teria um efeito pior:
+   * o custo de uma conta desativada, que existe em `ovh_monthly_costs`, sumiria
+   * do total sem aviso. O numero cairia e nada na tela explicaria por que.
+   */
+  contas?: string[];
   /** `ovh_projects.service_name`. `undefined` = todos os projetos. */
   projeto?: string;
   /** Codigo ISO. Obrigatorio em tudo que soma -- ver regra 2. */
@@ -72,8 +85,12 @@ function condicoesBase(f: FiltroOvhSemMoeda, p: ConstrutorParams): string[] {
     `c.source = ${p.add(f.source)}`,
   ];
 
-  if (f.conta !== undefined) {
-    condicoes.push(`c.provider_account_id = ${p.add(f.conta)}`);
+  // `= ANY($n)` com um array parametrizado, e nao `IN (...)` montado por
+  // interpolacao: o driver manda o array como UM parametro, entao o numero de
+  // contas selecionadas nao muda a forma da consulta nem abre espaco para
+  // concatenacao de string.
+  if (f.contas !== undefined && f.contas.length > 0) {
+    condicoes.push(`c.provider_account_id = ANY(${p.add(f.contas)}::text[])`);
   }
 
   if (f.projeto !== undefined) {
@@ -536,13 +553,15 @@ export type FaturasOvh = {
  * de cabecalho para exibir um numero.
  */
 export async function contarFaturasOvh(
-  f: Pick<FiltroOvh, "deMes" | "ateMes" | "conta">,
+  f: Pick<FiltroOvh, "deMes" | "ateMes" | "contas">,
 ): Promise<number> {
   const p = new ConstrutorParams();
   const de = p.add(f.deMes);
   const ate = p.add(f.ateMes);
   const filtroConta =
-    f.conta !== undefined ? ` AND provider_account_id = ${p.add(f.conta)}` : "";
+    f.contas !== undefined && f.contas.length > 0
+      ? ` AND provider_account_id = ANY(${p.add(f.contas)}::text[])`
+      : "";
 
   const linha = await queryOne<{ total: string }>(
     `SELECT count(*) AS total
@@ -563,7 +582,7 @@ export async function contarFaturasOvh(
  * e por isso esta funcao devolve linhas e nao total.
  */
 export async function getFaturasOvh(
-  f: Pick<FiltroOvh, "deMes" | "ateMes" | "conta">,
+  f: Pick<FiltroOvh, "deMes" | "ateMes" | "contas">,
   limite = 60,
   deslocamento = 0,
 ): Promise<FaturasOvh> {
@@ -573,7 +592,9 @@ export async function getFaturasOvh(
   const lim = p.add(limite);
   const off = p.add(deslocamento);
   const filtroConta =
-    f.conta !== undefined ? ` AND h.provider_account_id = ${p.add(f.conta)}` : "";
+    f.contas !== undefined && f.contas.length > 0
+      ? ` AND h.provider_account_id = ANY(${p.add(f.contas)}::text[])`
+      : "";
 
   const itens = await query<{
     bill_id: string;
@@ -613,8 +634,19 @@ export async function getFaturasOvh(
     p.lista,
   );
 
+  // Tambem recortado pelas contas selecionadas. Um numero global aqui diria
+  // "3 faturas sem mes atribuido" ao lado de uma lista de UMA conta que nao tem
+  // nenhuma -- e o aviso mandaria procurar o que nao existe naquele recorte.
+  const q = new ConstrutorParams();
+  const filtroContaSemMes =
+    f.contas !== undefined && f.contas.length > 0
+      ? ` AND provider_account_id = ANY(${q.add(f.contas)}::text[])`
+      : "";
   const semMes = await queryOne<{ total: string }>(
-    `SELECT count(*) AS total FROM ovh_invoice_headers WHERE billing_month IS NULL`,
+    `SELECT count(*) AS total
+       FROM ovh_invoice_headers
+      WHERE billing_month IS NULL${filtroContaSemMes}`,
+    q.lista,
   );
 
   return {
@@ -634,4 +666,135 @@ export async function getFaturasOvh(
     })),
     semMesAtribuido: Number(semMes?.total ?? 0),
   };
+}
+
+
+/**
+ * Contas OVH do CADASTRO DO PORTAL -- a lista do seletor de contas.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE `cloud_accounts` E NAO `ovh_provider_accounts`
+ *
+ * As duas tabelas tem alias, e ELAS DISCORDAM. `ovh_provider_accounts` guarda o
+ * que o collector leu da OVH; `app_account_settings` guarda o que um ADMIN
+ * digitou em Configuracoes > Contas Cloud. Em producao a mesma conta aparece
+ * como "OVH Principal" na primeira e "OVH Canada" na segunda.
+ *
+ * A regra do portal e explicita e vale aqui: o alias definido em Contas Cloud
+ * substitui o nome do cadastro nos FILTROS, nos cards, na tabela analitica e nas
+ * exportacoes. Ler a outra tabela faria este seletor ser o unico lugar do portal
+ * a chamar a conta por outro nome -- e quem renomeasse a conta veria a mudanca
+ * em toda parte menos aqui.
+ *
+ * `active` tambem so existe em `cloud_accounts`: conta desativada nao deve
+ * aparecer como opcao de filtro.
+ *
+ * NAO ha contas AWS nesta lista: `provider = 'ovh'` esta na consulta, e nao numa
+ * verificacao posterior que alguem possa esquecer de repetir.
+ */
+export async function getContasOvhDoCadastro(): Promise<
+  { id: string; nome: string }[]
+> {
+  // `app_account_settings` e da migracao 002. Sem ela, um LEFT JOIN lancaria e
+  // derrubaria a tela inteira -- degradar para `account_name` mostra um rotulo
+  // ANTERIOR, nunca um nome errado. Mesma disciplina de `alias-conta.ts`.
+  const comAlias = await aliasDisponivel();
+
+  const nome = comAlias
+    ? `coalesce(nullif(btrim(s.alias), ''), nullif(btrim(a.account_name), ''), a.account_id)`
+    : `coalesce(nullif(btrim(a.account_name), ''), a.account_id)`;
+  const juncao = comAlias
+    ? "LEFT JOIN app_account_settings s ON s.account_id = a.account_id"
+    : "";
+
+  const linhas = await query<{ account_id: string; nome: string }>(
+    `SELECT a.account_id, ${nome} AS nome
+       FROM cloud_accounts a
+       ${juncao}
+      WHERE a.provider = 'ovh'
+        AND a.active
+      ORDER BY nome ASC, a.account_id ASC`,
+  );
+  return linhas.map((l) => ({ id: l.account_id, nome: l.nome }));
+}
+
+
+export type SituacaoContaOvh = {
+  id: string;
+  nome: string;
+  /** `status` da ULTIMA execucao daquela conta. `null` = nunca coletada. */
+  ultimoStatus: string | null;
+  /** ISO-8601 do fim da ultima execucao. `null` quando nunca terminou. */
+  ultimoFim: string | null;
+  /** Ha linha em `cloud_provider_credentials`? `null` = migracao 006 ausente. */
+  temCredencial: boolean | null;
+};
+
+/**
+ * Uma linha por conta OVH ATIVA, com o resultado da ultima coleta dela.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE POR CONTA, E NAO UM STATUS SO
+ *
+ * O card do collector dizia "coleta em dia" a partir da ULTIMA execucao
+ * registrada, qualquer que fosse a conta. Com uma conta so isso e correto. Com
+ * duas, uma coleta bem-sucedida da conta A produziria "coleta em dia" enquanto a
+ * conta B falha ha uma semana -- e o painel afirmaria saude que nao existe.
+ *
+ * `DISTINCT ON` pega a ultima execucao POR CONTA numa passagem. A alternativa
+ * (subconsulta com max(started_at) por conta) le a tabela duas vezes para
+ * responder a mesma pergunta.
+ *
+ * `LEFT JOIN`: conta cadastrada que nunca foi coletada aparece com
+ * `ultimoStatus: null`. Some-la da lista esconderia justamente a conta que
+ * ninguem coletou.
+ */
+export async function getSituacaoPorContaOvh(): Promise<SituacaoContaOvh[]> {
+  const contas = await getContasOvhDoCadastro();
+  if (contas.length === 0) return [];
+
+  const ids = contas.map((c) => c.id);
+
+  const execucoes = await query<{
+    provider_account_id: string;
+    status: string;
+    finished_at: Date | null;
+  }>(
+    `SELECT DISTINCT ON (r.provider_account_id)
+            r.provider_account_id, r.status, r.finished_at
+       FROM ovh_sync_runs r
+      WHERE r.provider_account_id = ANY($1::text[])
+      ORDER BY r.provider_account_id, r.started_at DESC`,
+    [ids],
+  );
+
+  const porConta = new Map(execucoes.map((e) => [e.provider_account_id, e]));
+
+  // A tabela de credenciais e da migracao 006. Sem ela, `temCredencial` fica
+  // `null` -- "nao sei" e nao "nao tem": afirmar ausencia mandaria alguem
+  // cadastrar credencial que ja pode existir.
+  const temTabela = await queryOne<{ existe: boolean }>(
+    `SELECT to_regclass('public.cloud_provider_credentials') IS NOT NULL AS existe`,
+  );
+
+  const comCredencial = new Set<string>();
+  if (temTabela.existe) {
+    const linhas = await query<{ account_id: string }>(
+      `SELECT account_id FROM cloud_provider_credentials
+        WHERE provider = 'ovh' AND account_id = ANY($1::text[])`,
+      [ids],
+    );
+    for (const l of linhas) comCredencial.add(l.account_id);
+  }
+
+  return contas.map((c) => {
+    const e = porConta.get(c.id);
+    return {
+      id: c.id,
+      nome: c.nome,
+      ultimoStatus: e?.status ?? null,
+      ultimoFim: e?.finished_at ? e.finished_at.toISOString() : null,
+      temCredencial: temTabela.existe ? comCredencial.has(c.id) : null,
+    };
+  });
 }

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 
 import { CarregandoLinhas } from "@/components/ui/estado";
+import { resumirCollector } from "@/lib/dashboard/collector-contas";
 import { DESCRICAO_FONTE, ROTULO_FONTE } from "@/lib/dashboard/ovh";
 import type {
   MetaOvh,
@@ -80,13 +81,24 @@ export function CardsKpiOvh({
   meta,
   carregando,
   tz,
+  contasSelecionadas = [],
 }: {
   resumo: ResumoOvhCliente | null;
   sincronizacao: SincronizacaoOvh | null;
   meta: MetaOvh | null;
   carregando: boolean;
   tz: string;
+  /** Ids do recorte. Vazio = todas as contas. */
+  contasSelecionadas?: string[];
 }) {
+  // O resumo do collector e do RECORTE, e por isso e calculado aqui e nao no
+  // servidor: `sync-status` nao conhece os filtros (ele e buscado uma vez, sem
+  // params, porque a saude do collector nao muda com o periodo). O que muda com
+  // o filtro e QUAIS contas interessam -- e isso e agregacao, nao consulta.
+  const resumoCollector =
+    sincronizacao && sincronizacao.porConta.length > 0
+      ? resumirCollector(sincronizacao.porConta, contasSelecionadas, new Date())
+      : null;
   if (carregando && !resumo) {
     return (
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -281,7 +293,15 @@ export function CardsKpiOvh({
       {/* ------------------------------------------- status do collector */}
       <Cartao rotulo="Status do collector">
         <p className="mt-2">
-          {sincronizacao ? (
+          {resumoCollector ? (
+            <span
+              className={`inline-flex items-center rounded-full border px-2.5 py-1 text-sm font-semibold ${
+                TOM_SELO[resumoCollector.tom]
+              }`}
+            >
+              {resumoCollector.rotulo}
+            </span>
+          ) : sincronizacao ? (
             <span
               className={`inline-flex items-center rounded-full border px-2.5 py-1 text-sm font-semibold ${
                 TOM_SELO[sincronizacao.tom]
@@ -293,6 +313,19 @@ export function CardsKpiOvh({
             <span className="veri-numero text-2xl">{SEM_DADO}</span>
           )}
         </p>
+
+        {/* Um alerta por PROBLEMA, e nao um resumo unico. "1 conta com falha" e
+            "1 conta sem credencial" pedem acoes diferentes: a primeira manda
+            olhar o log, a segunda manda cadastrar em Contas Cloud. */}
+        {resumoCollector && resumoCollector.alertas.length > 0 && (
+          <ul className="mt-2 space-y-1">
+            {resumoCollector.alertas.map((a) => (
+              <li key={a} className="text-xs font-medium text-veri-vinho">
+                {a}
+              </li>
+            ))}
+          </ul>
+        )}
         <p className="mt-2 text-xs leading-relaxed text-texto-suave">
           {/*
             O texto carrega o estado, e nao so a cor: mostarda e vinho ficam
@@ -309,33 +342,16 @@ export function CardsKpiOvh({
           Lista vazia com collector instalado e informacao propria: a integracao
           existe mas nunca sincronizou conta alguma.
         */}
-        {sincronizacao !== null && (
-          <p className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-veri-offwhite pt-3 text-xs text-texto-suave">
-            {sincronizacao.contas.length === 0 ? (
-              "Nenhuma conta OVH sincronizada."
-            ) : (
-              <>
-                <span>{sincronizacao.contas.length === 1 ? "Conta:" : "Contas:"}</span>
-                {sincronizacao.contas.map((conta) => (
-                  <span
-                    key={conta.providerAccountId}
-                    className="inline-flex items-center rounded-full bg-veri-offwhite px-2 py-0.5"
-                    title={
-                      conta.moeda
-                        ? `Faturada em ${conta.moeda}`
-                        : "Moeda de faturamento não informada pela OVH"
-                    }
-                  >
-                    <span className="veri-numero">
-                      {conta.alias ?? conta.providerAccountId}
-                    </span>
-                    {conta.moeda && (
-                      <span className="ml-1 text-texto-suave/80">· {conta.moeda}</span>
-                    )}
-                  </span>
-                ))}
-              </>
-            )}
+        {/*
+          Procedencia do RECORTE, e nao a lista fixa de contas integradas. Com
+          duas contas e um filtro aplicado, "Conta: OVH Principal" afirmaria
+          procedencia errada -- os numeros acima sao das contas SELECIONADAS.
+        */}
+        {resumoCollector !== null && (
+          <p className="mt-3 border-t border-veri-offwhite pt-3 text-xs text-texto-suave">
+            {resumoCollector.total === 0
+              ? "Nenhuma conta OVH ativa no cadastro."
+              : resumoCollector.descricaoContas}
           </p>
         )}
       </Cartao>

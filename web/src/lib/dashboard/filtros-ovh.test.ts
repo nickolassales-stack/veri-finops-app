@@ -37,8 +37,12 @@ describe("lerFiltrosOvh", () => {
     // Inclusive os presets DIARIOS da AWS: um link da outra visao colado aqui
     // nao pode deixar a tela em branco.
     expect(ler("periodo=30d").periodo).toBe("12m");
-    expect(ler("periodo=mes-atual").periodo).toBe("12m");
     expect(ler("periodo=qualquer").periodo).toBe("12m");
+  });
+
+  it("os presets de mes unico sao lidos da URL", () => {
+    expect(ler("periodo=mes-atual").periodo).toBe("mes-atual");
+    expect(ler("periodo=mes-anterior").periodo).toBe("mes-anterior");
   });
 
   it("origem invalida cai em invoice -- nunca em 'todas'", () => {
@@ -166,7 +170,7 @@ describe("validarIntervaloOvh", () => {
 describe("descreverFiltrosOvh", () => {
   it("nomeia periodo, origem e projeto", () => {
     expect(descreverFiltrosOvh(FILTROS_OVH_PADRAO)).toBe(
-      "Últimos 12 meses · Faturado · todos os projetos",
+      "Últimos 12 meses · Faturado · todas as contas · todos os projetos",
     );
   });
 

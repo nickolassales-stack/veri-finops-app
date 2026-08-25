@@ -1,7 +1,10 @@
 import { rotaComPermissao } from "@/lib/api/rota";
 import { ROTULO_SITUACAO_COLLECTOR, tomDaSituacao } from "@/lib/dashboard/ovh";
 import { decidirSituacaoOvh } from "@/lib/diagnostico/ovh";
-import { getContasOvh, ovhInstaladoNoBanco } from "@/lib/queries/dashboard-ovh";
+import {
+  getSituacaoPorContaOvh,
+  ovhInstaladoNoBanco,
+} from "@/lib/queries/dashboard-ovh";
 import {
   getExecucoesOvh,
   getUltimoSucessoOvh,
@@ -16,8 +19,13 @@ import {
  * /dashboard/diagnostico diz "a ultima coleta falhou", a tela cuja funcao e
  * atestar a qualidade do dado seria a primeira a discordar da que o exibe.
  *
- * Alem da saude do collector, devolve as contas OVH integradas -- a procedencia
- * dos numeros. `nichandle` fica de fora: ver `getContasOvh`.
+ * Alem da saude do collector, devolve UMA LINHA POR CONTA -- ultimo status,
+ * ultimo fim e se ha credencial cadastrada. Sem isso, o card nao consegue
+ * responder "as contas do MEU recorte estao em dia?": `situacao` e da ultima
+ * execucao registrada, qualquer que seja a conta, e com duas contas uma coleta
+ * boa da conta A esconderia a conta B falhando ha uma semana.
+ *
+ * `nichandle` fica de fora: e um e-mail, e poria endereco de terceiro na tela.
  *
  * O `error_message` NAO sai neste endpoint. Ele ja vem sanitizado do collector,
  * mas o painel executivo nao e o lugar de exibir stack -- quem precisa do detalhe
@@ -40,6 +48,7 @@ export const GET = rotaComPermissao(
           ultima: null,
           ultimoSucesso: null,
           contas: [],
+          porConta: [],
         },
         meta: {},
       };
@@ -53,10 +62,10 @@ export const GET = rotaComPermissao(
     // um card, nao a tabela de execucoes.
     // `getContasOvh()` entra no MESMO Promise.all: as tres leituras sao
     // independentes e somar latencia entre elas atrasaria o card sem motivo.
-    const [ultimas, ultimoSucesso, contas] = await Promise.all([
+    const [ultimas, ultimoSucesso, porConta] = await Promise.all([
       getExecucoesOvh(1),
       getUltimoSucessoOvh(),
-      getContasOvh(),
+      getSituacaoPorContaOvh(),
     ]);
 
     // Anotacao explicita, e nao `ultimas[0] ?? null`: `noUncheckedIndexedAccess`
@@ -89,7 +98,18 @@ export const GET = rotaComPermissao(
         // Procedencia: DE QUAL conta OVH vieram os numeros da visao. Com uma
         // conta unica parece redundante; e o que impede a tela de afirmar
         // "custos OVH" sem dizer de quem no dia em que houver a segunda.
-        contas,
+        contas: porConta.map((c) => ({
+          providerAccountId: c.id,
+          alias: c.nome,
+          moeda: null,
+          estado: c.ultimoStatus,
+        })),
+        // Uma linha POR CONTA. `situacao` acima e do collector como um todo --
+        // a ultima execucao, seja de quem for. Com duas contas ela nao responde
+        // "as MINHAS contas estao em dia?", e e essa a pergunta do card quando
+        // ha filtro de conta aplicado. A agregacao mora em `collector-contas.ts`,
+        // pura e testada, e roda no cliente com o recorte em maos.
+        porConta,
       },
       meta: { agora: agora.toISOString() },
     };

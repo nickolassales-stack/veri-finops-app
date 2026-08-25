@@ -21,7 +21,16 @@
  * e trata-lo como instante produz erro de um mes em fuso negativo.
  */
 
+/**
+ * A ORDEM AQUI E A ORDEM DOS BOTOES NA TELA.
+ *
+ * Do recorte mais estreito ao mais largo. "Mes atual" primeiro porque e a
+ * pergunta mais frequente de quem abre a tela no meio do mes -- e porque um
+ * botao de mes perdido depois de "Ultimos 24 meses" nao seria encontrado.
+ */
 export const PRESETS_MES = [
+  "mes-atual",
+  "mes-anterior",
   "6m",
   "12m",
   "24m",
@@ -35,6 +44,8 @@ export type PresetMes = (typeof PRESETS_MES)[number];
 export const PRESET_MES_PADRAO: PresetMes = "12m";
 
 export const ROTULOS_MES: Record<PresetMes, string> = {
+  "mes-atual": "Mês atual",
+  "mes-anterior": "Mês anterior",
   "6m": "Últimos 6 meses",
   "12m": "Últimos 12 meses",
   "24m": "Últimos 24 meses",
@@ -155,11 +166,26 @@ export function resolverPeriodoMensal(
         const ate = ateMes ?? mesCorrente;
         return { deMes: de, ateMes: ate, meses: contarMeses(de, ate) };
       }
+      case "mes-atual":
+        // UM mes, e o mes corrente nos dois extremos. Em 2026-08-25 a janela e
+        // 2026-08 a 2026-08 -- nao "do inicio do ano ate agora".
+        return { deMes: mesCorrente, ateMes: mesCorrente, meses: 1 };
+
+      case "mes-anterior": {
+        // `somarMeses` e nao `mes - 1`: em janeiro, subtrair do numero do mes
+        // daria "2026-00". O indice absoluto nao tem virada de ano.
+        const anterior = somarMeses(mesCorrente, -1);
+        return { deMes: anterior, ateMes: anterior, meses: 1 };
+      }
+
       case "ano-atual": {
         const de = `${mesCorrente.slice(0, 4)}-01`;
         return { deMes: de, ateMes: mesCorrente, meses: contarMeses(de, mesCorrente) };
       }
       default: {
+        // Chega aqui apenas "6m" | "12m" | "24m". Os presets nomeados tem caso
+        // proprio acima -- `Number("mes-atual".replace("m",""))` seria NaN, e a
+        // janela viria com `deMes` invalido sem nenhum erro.
         const total = Number(preset.replace("m", ""));
         return {
           deMes: somarMeses(mesCorrente, -(total - 1)),

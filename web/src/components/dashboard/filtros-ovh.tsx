@@ -40,8 +40,10 @@ export function FiltrosOvhBarra({
   filtros: FiltrosOvh;
   problema: ProblemaFiltroOvh;
   /**
-   * Contas OVH do cadastro. Vazio ou com UMA conta esconde o seletor: um
-   * dropdown de um item so ocupa espaco e sugere uma escolha que nao existe.
+   * Contas OVH ATIVAS do cadastro do portal (`cloud_accounts` + alias). Vazio
+   * ou com UMA conta esconde o seletor: um filtro de um item so ocupa espaco e
+   * sugere uma escolha que nao existe. Nenhuma conta AWS chega aqui -- a
+   * consulta ja filtra `provider = 'ovh'`.
    */
   contas?: { id: string; nome: string }[];
   projetos: ProjetoDisponivel[];
@@ -64,11 +66,13 @@ export function FiltrosOvhBarra({
             fontesComDado={fontesComDado}
             aoMudar={(source) => aoMudar({ source })}
           />
+          {/* Contas ANTES de Projeto: um projeto pertence a uma conta, e a
+              pergunta natural vai do maior para o menor recorte. */}
           {(contas?.length ?? 0) > 1 && (
-            <FiltroConta
-              selecionada={filtros.conta}
+            <FiltroContas
+              selecionadas={filtros.contas}
               contas={contas ?? []}
-              aoMudar={(conta) => aoMudar({ conta })}
+              aoMudar={(lista) => aoMudar({ contas: lista })}
             />
           )}
           <FiltroProjeto
@@ -277,50 +281,100 @@ function FiltroOrigem({
   );
 }
 
-/** Projeto OVH. `<select>` nativo: a lista e curta e o controle e conhecido. */
 /**
- * Conta OVH.
+ * Contas OVH -- MULTIPLA ESCOLHA.
  *
- * Aparece so com DUAS ou mais contas -- ver a prop `contas`. Hoje ha uma unica
- * conta em producao, entao o seletor nao e renderizado; ele surge sozinho quando
- * a segunda for cadastrada, sem mudanca de codigo.
+ * ---------------------------------------------------------------------------
+ * CAIXAS DE MARCACAO, E NAO `<select multiple>`
+ *
+ * O `<select multiple>` nativo e uma armadilha conhecida: para escolher a
+ * segunda opcao e preciso segurar Ctrl, e quem nao sabe disso DESMARCA a
+ * primeira ao clicar na segunda -- silenciosamente, achando que somou. Num
+ * filtro que muda todos os numeros da tela, esse gesto errado nao tem sintoma.
+ *
+ * Caixas de marcacao nao tem esse modo escondido, e cada uma e um alvo de toque
+ * legitimo no celular.
+ *
+ * ---------------------------------------------------------------------------
+ * "TODAS" E A AUSENCIA DE SELECAO, E NAO UMA CAIXA A MAIS
+ *
+ * Uma caixa "Todas" que marca as demais parece util e cria um terceiro estado
+ * ambiguo -- "todas marcadas" e "todas" viram coisas diferentes na URL, e
+ * cadastrar a terceira conta faria um recorte "todas" antigo passar a excluir
+ * a conta nova sem que ninguem tenha mudado o filtro.
+ *
+ * Aqui, nenhuma marcada = todas. O botao "Todas as contas" apenas LIMPA.
+ *
+ * Aparece so com DUAS ou mais contas: um filtro de um item so ocupa espaco e
+ * sugere uma escolha que nao existe.
  */
-function FiltroConta({
-  selecionada,
+function FiltroContas({
+  selecionadas,
   contas,
   aoMudar,
 }: {
-  selecionada: string;
+  selecionadas: string[];
   contas: { id: string; nome: string }[];
-  aoMudar: (conta: string) => void;
+  aoMudar: (contas: string[]) => void;
 }) {
-  const id = useId();
+  const idBase = useId();
+  const todas = selecionadas.length === 0;
+
+  function alternar(id: string) {
+    aoMudar(
+      selecionadas.includes(id)
+        ? selecionadas.filter((x) => x !== id)
+        : [...selecionadas, id],
+    );
+  }
 
   return (
-    <div className="min-w-0">
-      <label
-        htmlFor={id}
-        className="block text-xs font-medium uppercase tracking-wide text-texto-suave"
-      >
-        Conta
-      </label>
+    <fieldset className="min-w-0">
+      <legend className="text-xs font-medium uppercase tracking-wide text-texto-suave">
+        Contas
+      </legend>
 
-      <select
-        id={id}
-        value={selecionada}
-        onChange={(e) => aoMudar(e.target.value)}
-        className="mt-2 max-w-[16rem] rounded-lg border border-veri-verde-claro/50 bg-veri-branco px-3 py-1.5 text-sm text-veri-verde-escuro"
-      >
-        <option value="">Todas as contas OVH</option>
-        {contas.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.nome}
-          </option>
-        ))}
-      </select>
-    </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => aoMudar([])}
+          aria-pressed={todas}
+          className={pilula(todas)}
+        >
+          Todas as contas
+        </button>
+
+        {contas.map((c) => {
+          const id = `${idBase}-${c.id}`;
+          const marcada = selecionadas.includes(c.id);
+
+          return (
+            <div key={c.id} className="relative">
+              <input
+                type="checkbox"
+                id={id}
+                checked={marcada}
+                onChange={() => alternar(c.id)}
+                className="peer sr-only"
+              />
+              <label htmlFor={id} className={pilula(marcada)} title={c.id}>
+                {c.nome}
+              </label>
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="mt-1.5 max-w-xs text-xs text-texto-suave">
+        {todas
+          ? "Todas as contas OVH ativas do cadastro."
+          : `${selecionadas.length} de ${contas.length} contas no recorte.`}
+      </p>
+    </fieldset>
   );
 }
+
+/** Projeto OVH. `<select>` nativo: a lista e curta e o controle e conhecido. */
 
 function FiltroProjeto({
   selecionado,

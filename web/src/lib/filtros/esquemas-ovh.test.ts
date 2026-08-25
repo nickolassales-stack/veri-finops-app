@@ -60,8 +60,20 @@ describe("periodo em meses", () => {
   });
 
   it("RECUSA os presets diarios da AWS", () => {
-    for (const periodo of ["7d", "30d", "mes-atual", "mes-anterior"]) {
-      expect(falha({ periodo })[0]?.message).toContain("Periodo deve ser um de");
+    // `mes-atual` e `mes-anterior` SAIRAM desta lista: eram exemplos de preset
+    // inexistente, e agora existem. Os diarios continuam recusados -- na
+    // granularidade mensal, "7d" ou devolve o mes inteiro ou devolve nada.
+    for (const periodo of ["7d", "30d", "90d", "hoje", "ontem"]) {
+      expect(falha({ periodo })[0]?.message, periodo).toContain(
+        "Periodo deve ser um de",
+      );
+    }
+  });
+
+  it("ACEITA os presets de mes unico", () => {
+    for (const periodo of ["mes-atual", "mes-anterior"]) {
+      const r = esquemaDashboardOvh.safeParse({ periodo });
+      expect(r.success, periodo).toBe(true);
     }
   });
 

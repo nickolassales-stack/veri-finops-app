@@ -20,9 +20,8 @@ import {
   type PeriodoMensalResolvido,
 } from "@/lib/filtros/periodo-mensal";
 import {
-  getContasOvh,
+  getContasOvhDoCadastro,
   getDisponibilidadeOvh,
-  type ContaOvh,
   ovhInstaladoNoBanco,
   type DisponibilidadeOvh,
   type FiltroOvh,
@@ -90,7 +89,7 @@ export async function resolverFiltroOvh(
     deMes: periodo.deMes,
     ateMes: periodo.ateMes,
     source: entrada.source,
-    conta: entrada.conta,
+    contas: entrada.conta,
     projeto: entrada.projeto,
   };
 
@@ -109,13 +108,13 @@ export async function resolverFiltroOvh(
     });
   }
 
-  // `getContasOvh` entra no MESMO Promise.all: as duas leituras sao
-  // independentes, e a lista de contas alimenta o seletor de TODAS as abas do
-  // Analitico -- nao so a de projetos. Uma linha em `ovh_provider_accounts` por
-  // conta, entao o custo e desprezivel perto de uma segunda ida ao banco.
+  // A lista de contas entra no MESMO Promise.all: as duas leituras sao
+  // independentes, e a lista alimenta o seletor de TODAS as abas -- nao so a de
+  // projetos. Uma linha por conta, entao o custo e desprezivel perto de uma
+  // segunda ida ao banco.
   const [disponibilidade, contas] = await Promise.all([
     getDisponibilidadeOvh(semMoeda),
-    getContasOvh(),
+    getContasOvhDoCadastro(),
   ]);
   const escolha = escolherMoeda(disponibilidade.moedas, entrada.moeda);
 
@@ -137,7 +136,7 @@ function montar(ctx: {
   instalado: boolean;
   disponibilidade: DisponibilidadeOvh;
   escolha: ReturnType<typeof escolherMoeda>;
-  contas?: ContaOvh[];
+  contas?: { id: string; nome: string }[];
 }): FiltroOvhResolvido {
   const { entrada, periodo, disponibilidade, escolha } = ctx;
 
@@ -158,6 +157,12 @@ function montar(ctx: {
           deMes: periodo.deMes,
           ateMes: periodo.ateMes,
           source: entrada.source,
+          // `contas` ESTAVA FALTANDO AQUI. O campo chegava a `semMoeda` -- usado
+          // so para descobrir quais moedas existem no recorte -- e nao ao filtro
+          // que alimenta os cards, os graficos e as tabelas. Consequencia:
+          // `?conta=x` mudava a moeda escolhida e mais nada; todos os numeros
+          // continuavam sendo de TODAS as contas, sem nenhum sinal na tela.
+          contas: entrada.conta,
           projeto: entrada.projeto,
           moeda: escolha.moeda,
         };
@@ -199,12 +204,9 @@ function montar(ctx: {
     estado,
     podeBRL: podeEstimarBRL(escolha.moeda),
     meta: {
-      contasDisponiveis: (ctx.contas ?? []).map((c) => ({
-        id: c.providerAccountId,
-        // `alias` e o rotulo humano; `nichandle` NAO entra -- e um e-mail, e
-        // poria endereco de terceiro na tela e na URL do filtro.
-        nome: c.alias ?? c.providerAccountId,
-      })),
+      // Rotulo humano do cadastro do portal. O `nichandle` da OVH NAO entra --
+      // e um e-mail, e poria endereco de terceiro na tela e na URL do filtro.
+      contasDisponiveis: ctx.contas ?? [],
       periodo: {
         preset: periodo.preset,
         rotulo: periodo.rotulo,
@@ -215,6 +217,8 @@ function montar(ctx: {
       },
       filtros: {
         source: entrada.source,
+        contas: entrada.conta ?? [],
+        todasAsContas: entrada.conta === undefined,
         projeto: entrada.projeto ?? null,
         todosOsProjetos: entrada.projeto === undefined,
         /**
@@ -236,7 +240,11 @@ function montar(ctx: {
       },
       estado,
       ausencia: {
-        mensagem: mensagemDeAusencia(estado, entrada.source),
+        mensagem: mensagemDeAusencia(
+          estado,
+          entrada.source,
+          entrada.conta?.length ?? 0,
+        ),
         detalhe: detalheDeAusencia(estado),
       },
       base: { hoje: ctx.hoje, mesCorrente: mesDe(ctx.hoje) },

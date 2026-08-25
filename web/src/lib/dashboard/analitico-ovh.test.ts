@@ -37,15 +37,28 @@ describe("ehVisaoOvh — o provedor exibido", () => {
 describe("filtro de conta OVH", () => {
   it("é lido da URL", () => {
     const f = lerFiltrosOvh(new URLSearchParams("provider=ovh&conta=ovh-main-ca"));
-    expect(f.conta).toBe("ovh-main-ca");
+    expect(f.contas).toEqual(["ovh-main-ca"]);
+  });
+
+  it("aceita várias contas separadas por vírgula", () => {
+    const f = lerFiltrosOvh(new URLSearchParams("provider=ovh&conta=ovh-a-ca,ovh-b-ca"));
+    expect(f.contas).toEqual(["ovh-a-ca", "ovh-b-ca"]);
+  });
+
+  it("o parâmetro segue no SINGULAR — `contas` é da visão AWS", () => {
+    // As duas visões moram em `/dashboard`. Reusar `contas` faria uma URL da
+    // outra visão aplicar um recorte silencioso aqui, e um id AWS de 12 dígitos
+    // casa com o formato do id OVH — a validação não pegaria.
+    const f = lerFiltrosOvh(new URLSearchParams("provider=ovh&contas=800168045394"));
+    expect(f.contas).toEqual([]);
   });
 
   it("ausente significa todas as contas", () => {
-    expect(lerFiltrosOvh(new URLSearchParams("provider=ovh")).conta).toBe("");
+    expect(lerFiltrosOvh(new URLSearchParams("provider=ovh")).contas).toEqual([]);
   });
 
   it("volta para a URL e chega à API", () => {
-    const f = { ...FILTROS_OVH_PADRAO, conta: "ovh-main-ca" };
+    const f = { ...FILTROS_OVH_PADRAO, contas: ["ovh-main-ca"] };
     expect(escreverFiltrosOvh(f).get("conta")).toBe("ovh-main-ca");
     expect(paramsDaApiOvh(f).get("conta")).toBe("ovh-main-ca");
   });
@@ -60,7 +73,7 @@ describe("filtro de conta OVH", () => {
   it("conta selecionada conta como filtro aplicado", () => {
     expect(temFiltroOvhAplicado(FILTROS_OVH_PADRAO)).toBe(false);
     expect(
-      temFiltroOvhAplicado({ ...FILTROS_OVH_PADRAO, conta: "ovh-main-ca" }),
+      temFiltroOvhAplicado({ ...FILTROS_OVH_PADRAO, contas: ["ovh-main-ca"] }),
     ).toBe(true);
   });
 

@@ -28,8 +28,14 @@ export type FiltrosOvh = {
   deMes: string;
   ateMes: string;
   source: FonteOvh;
-  /** Vazio significa "todas as contas OVH". */
-  conta: string;
+  /**
+   * Ids das contas do recorte. VAZIO significa "todas as contas OVH".
+   *
+   * Lista e nao valor unico: "quanto custaram estas duas contas" nao se responde
+   * com um seletor de um item so, e somar duas consultas no cliente daria um
+   * total sem a variacao nem a contagem correspondentes.
+   */
+  contas: string[];
   /** Vazio significa "todos os projetos". */
   projeto: string;
   /** Vazio significa "a moeda de maior volume, escolhida pelo servidor". */
@@ -43,7 +49,7 @@ export const FILTROS_OVH_PADRAO: FiltrosOvh = {
   // `invoice` e o padrao porque e o custo REALIZADO. `usage_forecast` como
   // padrao poria uma projecao no card principal do painel executivo.
   source: "invoice",
-  conta: "",
+  contas: [],
   projeto: "",
   moeda: "",
 };
@@ -53,6 +59,34 @@ export const PRESETS_OVH_VISIVEIS: readonly PresetMes[] = PRESETS_MES;
 export const FONTES_VISIVEIS: readonly FonteOvh[] = FONTES_OVH;
 
 const FORMATO_MOEDA = /^[A-Za-z]{3}$/;
+const FORMATO_ID_CONTA = /^[A-Za-z0-9_-]{1,20}$/;
+
+/**
+ * Le `?conta=a,b`.
+ *
+ * O nome fica no SINGULAR de proposito: `contas` ja e o filtro de contas da
+ * visao AWS, e as duas visoes moram no mesmo caminho `/dashboard`. Reusar o nome
+ * faria uma URL da outra visao aplicar um recorte silencioso aqui -- e um id AWS
+ * de 12 digitos casa com o formato do id OVH, entao a validacao nao pegaria.
+ *
+ * De quebra, `?conta=ovh-main-ca` (a forma antiga, de valor unico) continua
+ * valendo sem camada de compatibilidade: um id sozinho ja e uma lista de um.
+ *
+ * Ids invalidos sao DESCARTADOS em vez de derrubar a leitura:
+ * esta funcao alimenta a tela, e uma URL colada pela metade deve mostrar o que
+ * da para mostrar, nao uma pagina de erro. O servidor valida de novo e recusa.
+ *
+ * Duplicatas saem: `?contas=a,a` selecionaria a mesma conta duas vezes na
+ * interface, e a contagem "2 contas selecionadas" mentiria.
+ */
+function lerContas(params: URLSearchParams): string[] {
+  const bruto = params.get("conta") ?? "";
+  const ids = bruto
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => FORMATO_ID_CONTA.test(s));
+  return [...new Set(ids)];
+}
 
 /** Le os filtros de uma query string, caindo no padrao quando invalido. */
 export function lerFiltrosOvh(params: URLSearchParams): FiltrosOvh {
@@ -75,7 +109,7 @@ export function lerFiltrosOvh(params: URLSearchParams): FiltrosOvh {
     deMes: ehMesISOValido(deMes) ? deMes : "",
     ateMes: ehMesISOValido(ateMes) ? ateMes : "",
     source,
-    conta: (params.get("conta") ?? "").trim(),
+    contas: lerContas(params),
     projeto: (params.get("projeto") ?? "").trim(),
     moeda: FORMATO_MOEDA.test(moeda) ? moeda.toUpperCase() : "",
   };
@@ -104,7 +138,7 @@ export function escreverFiltrosOvh(filtros: FiltrosOvh): URLSearchParams {
   if (filtros.source !== FILTROS_OVH_PADRAO.source) {
     params.set("source", filtros.source);
   }
-  if (filtros.conta) params.set("conta", filtros.conta);
+  if (filtros.contas.length > 0) params.set("conta", filtros.contas.join(","));
   if (filtros.projeto) params.set("projeto", filtros.projeto);
   if (filtros.moeda) params.set("moeda", filtros.moeda);
 
@@ -130,7 +164,7 @@ export function paramsDaApiOvh(filtros: FiltrosOvh): URLSearchParams {
   }
 
   params.set("source", filtros.source);
-  if (filtros.conta) params.set("conta", filtros.conta);
+  if (filtros.contas.length > 0) params.set("conta", filtros.contas.join(","));
   if (filtros.projeto) params.set("projeto", filtros.projeto);
   if (filtros.moeda) params.set("moeda", filtros.moeda);
 
@@ -181,18 +215,57 @@ export function validarIntervaloOvh(filtros: FiltrosOvh): ProblemaFiltroOvh {
   return null;
 }
 
+/**
+ * Como a selecao de contas se le em uma frase.
+ *
+ * Tres formas, e a do meio e a que importa: com UMA conta escolhida, dizer
+ * "1 conta selecionada" esconde justamente a informacao util -- QUAL. Com duas
+ * ou mais, o nome de cada uma nao cabe no cabecalho, e a contagem passa a ser a
+ * leitura certa.
+ */
+export function descreverContasOvh(
+  contas: string[],
+  disponiveis?: { id: string; nome: string }[],
+): string {
+  if (contas.length === 0) return "todas as contas";
+  if (contas.length === 1) {
+    const achada = disponiveis?.find((c) => c.id === contas[0]);
+    return achada?.nome ?? contas[0];
+  }
+  return `${contas.length} contas selecionadas`;
+}
+
+/**
+ * Resumo do PERIODO analisado.
+ *
+ * Traz a janela em meses ALEM do rotulo do preset, porque o rotulo sozinho e
+ * ambiguo na virada do mes: "Mês atual" em 31/08 e em 01/09 sao janelas
+ * diferentes, e quem compara dois prints precisa ver qual.
+ */
+export function descreverPeriodoOvh(periodo: {
+  deMes: string;
+  ateMes: string;
+  meses: number;
+  rotulo: string;
+}): string {
+  const plural = periodo.meses === 1 ? "mês" : "meses";
+  return `${periodo.deMes} a ${periodo.ateMes} · ${periodo.meses} ${plural} · ${periodo.rotulo}`;
+}
+
 /** Resumo textual do que esta aplicado, para leitor de tela e para o cabecalho. */
 export function descreverFiltrosOvh(
   filtros: FiltrosOvh,
   nomeDoProjeto?: string | null,
+  contasDisponiveis?: { id: string; nome: string }[],
 ): string {
   const periodo = ROTULOS_MES[filtros.periodo];
   const origem = ROTULO_FONTE[filtros.source];
+  const contas = descreverContasOvh(filtros.contas, contasDisponiveis);
   const projeto = filtros.projeto
     ? `projeto ${nomeDoProjeto ?? filtros.projeto}`
     : "todos os projetos";
 
-  return `${periodo} · ${origem} · ${projeto}`;
+  return `${periodo} · ${origem} · ${contas} · ${projeto}`;
 }
 
 /** `true` quando algo foi mudado em relacao ao padrao -- habilita "Limpar". */
@@ -200,7 +273,7 @@ export function temFiltroOvhAplicado(filtros: FiltrosOvh): boolean {
   return (
     filtros.periodo !== FILTROS_OVH_PADRAO.periodo ||
     filtros.source !== FILTROS_OVH_PADRAO.source ||
-    filtros.conta !== "" ||
+    filtros.contas.length > 0 ||
     filtros.projeto !== "" ||
     filtros.moeda !== ""
   );

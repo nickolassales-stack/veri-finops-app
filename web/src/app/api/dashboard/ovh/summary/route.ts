@@ -31,14 +31,23 @@ export const GET = rotaComPermissao(
   "GET /api/dashboard/ovh/summary",
   "dashboard:view",
   async ({ url, tz }) => {
-    const { filtro, periodo, estado, podeBRL, meta } = await resolverFiltroOvh(url, tz);
+    const { entrada, filtro, periodo, estado, podeBRL, meta } =
+      await resolverFiltroOvh(url, tz);
 
     // `projetosCadastrados` e `faturas` nao dependem de moeda nem de origem, e
     // por isso continuam valendo mesmo quando nao ha custo a somar: saber que
     // existem 3 projetos e 0 faturas no periodo E informacao.
+    //
+    // `contas` PRECISA ser repassado: sem ele o card "Faturas no periodo"
+    // contaria as faturas de TODAS as contas ao lado de um custo recortado por
+    // uma so -- dois numeros da mesma linha respondendo perguntas diferentes.
     const [projetosCadastrados, faturas] = await Promise.all([
       contarProjetosOvh(),
-      contarFaturasOvh({ deMes: periodo.deMes, ateMes: periodo.ateMes }),
+      contarFaturasOvh({
+        deMes: periodo.deMes,
+        ateMes: periodo.ateMes,
+        contas: entrada.conta,
+      }),
     ]);
 
     if (!filtro) {

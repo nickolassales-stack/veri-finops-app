@@ -114,6 +114,15 @@ export const DESCRICAO_FONTE = {
 export function mensagemDeAusencia(
   estado: EstadoDadoOvh,
   source: FonteOvh,
+  /**
+   * Quantas contas o recorte alcanca. `0` = todas.
+   *
+   * Entra na frase porque, com filtro de conta aplicado, "nenhum custo no
+   * periodo" manda investigar o periodo -- quando a causa pode ser a conta
+   * escolhida. Sem isso, alguem alarga a janela varias vezes antes de reparar
+   * que o filtro de conta estava ligado.
+   */
+  contasSelecionadas = 0,
 ): string | null {
   switch (estado) {
     case "sem-integracao":
@@ -127,7 +136,11 @@ export function mensagemDeAusencia(
           ? "Sem dados de previsão retornados pela API OVH."
           : "Nenhuma fatura OVH importada ainda.";
     case "periodo-sem-dado":
-      return `Nenhum custo OVH com origem “${ROTULO_FONTE[source]}” no período selecionado.`;
+      return contasSelecionadas > 0
+        ? `Nenhum custo OVH com origem “${ROTULO_FONTE[source]}” encontrado para este período e ${
+            contasSelecionadas === 1 ? "a conta selecionada" : "as contas selecionadas"
+          }.`
+        : `Nenhum custo OVH com origem “${ROTULO_FONTE[source]}” no período selecionado.`;
     case "ok":
       return null;
   }

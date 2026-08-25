@@ -31,6 +31,9 @@ export type MetaPeriodoMensal = {
 
 export type MetaFiltrosOvh = {
   source: FonteOvh;
+  /** Ids das contas do recorte. Vazio quando o recorte e "todas". */
+  contas: string[];
+  todasAsContas: boolean;
   projeto: string | null;
   todosOsProjetos: boolean;
   /**
@@ -69,6 +72,8 @@ export type MetaOvh = {
   agrupouEmOutros?: boolean;
   /** `monthly`: quantos meses da janela tem linha. */
   mesesComDado?: number;
+  /** Opcoes do seletor de contas -- do CADASTRO do portal, nao do collector. */
+  contasDisponiveis?: { id: string; nome: string }[];
   /** `projects`: opcoes do seletor de projeto. */
   projetosDisponiveis?: ProjetoDisponivel[];
   custoSemProjeto?: number;
@@ -162,6 +167,16 @@ export type ContaOvhCliente = {
   estado: string | null;
 };
 
+/** Situacao da ULTIMA coleta de UMA conta. Espelha `SituacaoContaOvh`. */
+export type ContaColetadaCliente = {
+  id: string;
+  nome: string;
+  ultimoStatus: string | null;
+  ultimoFim: string | null;
+  /** `null` quando a migracao 006 nao rodou -- "nao sei", nao "nao tem". */
+  temCredencial: boolean | null;
+};
+
 export type SincronizacaoOvh = {
   situacao: SituacaoCollector;
   rotulo: string;
@@ -170,6 +185,8 @@ export type SincronizacaoOvh = {
   ultimoSucesso: ExecucaoOvhCliente | null;
   /** Vazio quando o collector nunca sincronizou conta alguma. */
   contas: ContaOvhCliente[];
+  /** Uma linha por conta ATIVA do cadastro -- alimenta o resumo do recorte. */
+  porConta: ContaColetadaCliente[];
 };
 
 export type { EstadoDadoOvh, FonteOvh, SituacaoCollector, TotalPorMoeda };
