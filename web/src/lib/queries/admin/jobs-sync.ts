@@ -229,3 +229,29 @@ export async function enfileirarColeta(
   if (ultimo) return { job: ultimo, criado: false };
   throw new Error("nao foi possivel enfileirar a coleta");
 }
+
+/**
+ * Quantas coletas FALHARAM na janela recente.
+ *
+ * Alimenta o cartao "Coletas com falha" de Contas Cloud. Janela e nao total
+ * historico: uma falha de tres meses atras, ja resolvida, manteria o cartao
+ * vermelho para sempre e ensinaria a ignora-lo.
+ *
+ * Conta JOBS e nao execucoes do collector (`ovh_sync_runs`): o cartao esta numa
+ * tela de cadastro, e o que interessa ali e "o que eu pedi por esta tela deu
+ * errado?". A saude do pipeline inteiro e o Diagnostico que responde.
+ */
+export async function contarFalhasRecentes(dias = 7): Promise<number> {
+  // `$2::int` explicito: o driver manda o parametro sem tipo declarado, e
+  // deixar o Postgres inferir o argumento nomeado de `make_interval` e uma
+  // aposta desnecessaria num caminho que so roda em producao.
+  const linha = await queryOne<{ total: string }>(
+    `SELECT count(*) AS total
+       FROM cloud_sync_jobs
+      WHERE provider = $1
+        AND status = 'failed'
+        AND requested_at >= now() - make_interval(days => $2::int)`,
+    [PROVIDER, dias],
+  );
+  return Number(linha.total);
+}

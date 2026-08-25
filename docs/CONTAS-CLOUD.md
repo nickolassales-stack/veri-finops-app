@@ -1,10 +1,10 @@
 # Contas Cloud — cadastro e credenciais de provedor
 
-A tela **Configurações › Contas Cloud** (`/dashboard/configuracoes/contas`) era
-"Contas AWS". Passou a ser multi-provedor porque já era: `cloud_accounts` sempre
-teve coluna `provider`, e a conta OVH já aparecia na lista com selo próprio.
-O que mudou de fato é que contas OVH ganharam **credenciais de API**
-cadastráveis pela interface.
+A tela **Configurações › Contas Cloud** (`/dashboard/configuracoes/contas`) é
+**segmentada por provedor**: uma visão AWS e uma visão OVH, escolhidas por
+`?provider=`, com listas, ações e textos próprios. Contas OVH são cadastradas
+aqui, com **credenciais de API cifradas no banco**; contas AWS chegam pelo
+pipeline de custo e só têm metadados a editar.
 
 | Seção | |
 |---|---|
@@ -14,23 +14,68 @@ cadastráveis pela interface.
 
 ## 1. O que a tela faz
 
-Uma lista única com **todas** as contas de `cloud_accounts`, cada uma com selo do
-provedor. Para qualquer provedor:
+A tela é **segmentada por provedor**. `?provider=ovh` mostra a OVH; qualquer
+outro valor — inclusive nenhum — mostra a AWS.
 
-- **Alias** — substitui o nome do cadastro em filtros, cards, tabela analítica e
-  exportações
-- **Unidade de negócio**, **Centro de custo**, **Ambiente**
+| | `/contas` ou `?provider=aws` | `?provider=ovh` |
+|---|---|---|
+| Lista | só `provider != 'ovh'` | só `provider = 'ovh'` |
+| Como a conta chega | Data Export/CUR → S3 → Glue → Athena → ETL | cadastrada nesta tela |
+| Identificador | 12 dígitos emitidos pela AWS | etiqueta escolhida por nós (`ovh-cliente-ca`) |
+| Credencial | nenhuma — IAM role da instância | chave de API cifrada no banco |
+| Botão de adicionar | abre o **procedimento** (§1.2) | abre o **formulário** (§3) |
+| Colunas extras | fechamento, pagamento | endpoint, status da credencial, última validação |
 
-Contas com `provider = 'ovh'` ganham, além disso, o bloco **Credenciais OVH**:
-endpoint, Application Key, Application Secret, Consumer Key, status, última
-validação e última sincronização.
+**Antes era uma lista só, com os dois provedores juntos.** Ela funcionava e era
+ilegível: metade dos cartões trazia bloco de credencial e metade não, sem que a
+diferença aparecesse em lugar nenhum, e não havia caminho para adicionar conta.
+Quem procurava onde colar a chave da AWS concluía que faltava um campo — quando a
+resposta é que ele não existe.
 
-Fechamento de fatura e situação de pagamento **continuam em Faturamento**, atrás
-de `billing:manage`. Não foram trazidos para cá: deixar o campo editável nas duas
-telas significaria que `settings:accounts` altera dado de faturamento sem ter a
+Para qualquer provedor a tela edita **alias**, **unidade de negócio**, **centro de
+custo** e **ambiente**. Fechamento de fatura e situação de pagamento **continuam em
+Faturamento**, atrás de `billing:manage`: deixar o campo editável nas duas telas
+significaria que `settings:accounts` altera dado de faturamento sem ter a
 permissão que o protege.
 
----
+### 1.1. O filtro é do servidor
+
+`?provider=` viaja na requisição e a rota filtra antes de responder. Filtrar só na
+tela mandaria a lista OVH inteira — com a situação de cada credencial — para quem
+abriu a visão AWS: a separação seria cosmética, e o dado do outro provedor estaria
+no payload, visível em qualquer aba de rede.
+
+Os **totais dos cartões** do topo, ao contrário, são calculados sobre todas as
+contas. Trocar de visão não pode zerar o cartão do outro provedor — o número
+pareceria ter caído a zero.
+
+### 1.2. Pendência técnica: o ETL não cadastra contas AWS
+
+**Verificado no código, e é uma lacuna real.** `scripts/etl/athena_to_postgres.py`
+não menciona `cloud_accounts` — ele escreve em `aws_monthly_costs` e
+`aws_daily_costs` e mais nada. O próprio `scripts/onboard-cur-account.sh` diz isso
+na saída:
+
+> cadastrar a conta no PostgreSQL, senão ela aparece sem alias no dashboard
+> (o ETL não cadastra contas; a aplicação faz LEFT JOIN em cloud_accounts)
+
+…e imprime um `INSERT INTO cloud_accounts` para um humano executar (passo 8 do
+procedimento). **Não há auto-discovery.**
+
+A consequência é silenciosa e cara: se ninguém rodar o `INSERT`, o custo da conta
+nova entra nos totais do painel, mas a conta **não aparece** em Contas Cloud, em
+Faturamento nem nos filtros. O número sobe e não há conta a que atribuí-lo.
+
+**O que foi feito, e o que não foi.** A tela agora **detecta** a divergência —
+contas com linha em `aws_daily_costs` e sem linha em `cloud_accounts` — e mostra
+um aviso na visão AWS nomeando os ids. Ela **não** insere sozinha: adivinhar o
+alias e o provedor de uma conta que ninguém cadastrou é justamente o tipo de
+palpite que produz registro errado difícil de rastrear depois.
+
+Fechar a lacuna de verdade exige uma decisão que não é da tela: se o ETL deve
+criar a conta com `account_name = account_id` e deixar o alias em branco, ou se o
+cadastro deve continuar sendo um ato deliberado. Enquanto isso não for decidido, o
+passo manual continua — mas deixou de ser invisível.
 
 ## 2. Por que contas AWS não têm bloco de credenciais
 
@@ -54,9 +99,12 @@ encontrou — ver `motivoRecusaDeProvider` em
 
 ## 3. Como cadastrar uma conta OVH
 
-**Pré-requisitos:** ser **ADMIN**; a conta existir em `cloud_accounts` com
-`provider = 'ovh'`; a migração 006 aplicada; `APP_CREDENTIALS_ENCRYPTION_KEY`
-definida no ambiente do portal.
+**Pré-requisitos:** ser **ADMIN**; a migração 006 aplicada;
+`APP_CREDENTIALS_ENCRYPTION_KEY` definida no ambiente do portal.
+
+A conta **não precisa existir antes** — o formulário cria conta e credencial no
+mesmo envio. Cadastrar a credencial de uma conta que já existe continua sendo o
+caminho do botão **Credenciais** no cartão dela (§3.3).
 
 ### 3.1 Criar a credencial no console da OVH
 
@@ -85,15 +133,28 @@ de acusar a credencial.
 A OVH devolve os três valores **uma única vez**. O Application Secret não é
 recuperável depois.
 
-### 3.2 Cadastrar no portal
+### 3.2 Conta nova: o formulário
 
-1. Abra **Configurações › Contas Cloud**
-2. Localize a conta OVH pelo selo **OVH**
-3. No bloco **Credenciais OVH**, escolha o **Endpoint** da região onde a
-   credencial foi criada
-4. Preencha os três campos
-5. **Testar conexão** — confirme antes de gravar
-6. **Salvar credenciais**
+1. Abra **Configurações › Contas Cloud** e vá para **Visão OVH**
+2. **Adicionar conta OVH**
+3. **Provider Account ID** — a etiqueta que amarra credencial, coleta e custo
+   (`ovh-cliente-ca`). Ela **não muda depois**: é a chave de `cloud_accounts`.
+4. **Alias** e, opcionalmente, unidade de negócio, centro de custo e ambiente
+5. **Endpoint** da região onde a credencial foi criada
+6. As três chaves — ou **nenhuma**, para cadastrar a conta agora e colar as
+   chaves depois. Ela aparece na lista como *Credenciais não configuradas*.
+7. **Testar conexão** — funciona antes de salvar, e não grava nada
+8. **Salvar**, ou **Salvar e executar primeira coleta**
+
+Os três botões fazem coisas diferentes. Testar bate um `GET /me` na OVH e volta;
+descobrir que a chave está errada *depois* de gravar deixaria uma credencial
+inválida no banco e um cadastro que ninguém quis.
+
+### 3.3 Conta que já existe: o botão Credenciais
+
+No cartão da conta, **Credenciais** abre o bloco de rotação — endpoint, os três
+campos e o status. Campo de segredo em branco significa **manter o que está
+gravado**; é o que permite trocar só o endpoint sem redigitar as chaves.
 
 Salvar e testar são independentes de propósito. Salvar funciona com a API da OVH
 fora do ar; testar funciona sem ter salvo. Amarrar os dois faria uma
@@ -469,8 +530,10 @@ Todos exigem sessão. Os três de credencial exigem **papel ADMIN**.
 
 | Método | Rota | Exigência |
 |---|---|---|
-| GET | `/api/admin/accounts` | `settings:accounts` — `credencial` só para ADMIN |
+| GET | `/api/admin/accounts?provider=` | `settings:accounts` — `credencial` só para ADMIN |
+| POST | `/api/admin/accounts` | **ADMIN** — cria conta OVH |
 | PATCH | `/api/admin/accounts/:id` | `settings:accounts` |
+| POST | `/api/admin/ovh/test-credentials` | **ADMIN** — testa sem conta cadastrada |
 | GET | `/api/admin/accounts/:id/credentials` | ADMIN |
 | PUT | `/api/admin/accounts/:id/credentials` | ADMIN |
 | DELETE | `/api/admin/accounts/:id/credentials` | ADMIN |
@@ -478,6 +541,16 @@ Todos exigem sessão. Os três de credencial exigem **papel ADMIN**.
 | POST | `/api/admin/accounts/:id/credentials/sync` | ADMIN — enfileira coleta |
 | GET | `/api/admin/accounts/:id/credentials/sync` | ADMIN — job vivo + último |
 | POST | `/api/diagnostico/ovh/collect` | ADMIN — coleta manual pelo Diagnóstico |
+
+O `POST` de criação é **ADMIN**, e não `settings:accounts`, porque o corpo carrega
+os três segredos: `settings:accounts` é delegável a qualquer grupo, e um grupo pode
+conter um VIEWER — nenhuma permissão consegue expressar "só ADMIN". Ele **só cria
+conta OVH**; não existe POST para conta AWS, e a ausência é o desenho (§1.2).
+
+`/api/admin/ovh/test-credentials` vive **fora** de `/accounts/:id/` porque não tem
+conta: ele serve ao formulário de criação, em que testar antes de salvar é o ponto.
+Pendurá-lo num `accountId` inexistente exigiria inventar um id de fantasia na URL.
+Ele não persiste nada — o único efeito é um `GET /me` na OVH.
 
 `PUT` e não `PATCH` porque as três partes e o endpoint formam uma **unidade**:
 trocar a application key mantendo o secret antigo não produz credencial
@@ -520,6 +593,12 @@ se uma credencial que ele já possui é a cadastrada.
 6. **`GET /me` não prova todos os direitos.** Uma credencial que passa no teste
    ainda pode não ter acesso a `/me/bill`. O teste confirma identidade, não o
    conjunto de direitos que a coleta exige.
-7. **A tela não cria conta.** `cloud_accounts` é populada pelo onboarding, e o
-   `provider` não é editável aqui: trocá-lo desligaria a conta da sua origem de
-   dado.
+7. **A tela cria conta OVH, e só ela.** Conta AWS continua vindo do onboarding —
+   ver §1.2, que é a pendência técnica aberta. O `provider` não é editável em
+   nenhum dos dois casos: trocá-lo desligaria a conta da sua origem de dado.
+8. **Criar conta e gravar credencial não são atômicos.** A conta é criada
+   primeiro porque o AAD da cifragem inclui o `account_id` — não há como cifrar
+   antes de saber para quem. Se a gravação da credencial falhar, a conta
+   permanece, marcada "Credenciais não configuradas". Desfazer a conta destruiria
+   os metadados recém-digitados por causa de uma chave colada errado; o estado
+   resultante é visível, nomeado e recuperável com dois cliques no cartão.

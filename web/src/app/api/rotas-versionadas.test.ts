@@ -34,10 +34,28 @@ function rotasNoDisco(dir: string): string[] {
   return achadas;
 }
 
-/** `null` quando o Git nao esta disponivel -- dentro da imagem, `.git` nao existe. */
-function rastreadasPeloGit(): Set<string> | null {
+/**
+ * Rotas que o Git ENXERGA -- rastreadas, ou nao rastreadas mas nao ignoradas.
+ *
+ * `--cached --others --exclude-standard`, e nao apenas `ls-files`. A diferenca
+ * importa: com o padrao, toda rota recem-criada reprovava este teste ate alguem
+ * rodar `git add`, e o autor recebia a mensagem "regra do .gitignore" para um
+ * arquivo perfeitamente visivel. Um guarda que grita no caso normal e um guarda
+ * que se aprende a ignorar -- e ele existe para o dia em que o alarme for real.
+ *
+ * `--exclude-standard` e a peca que preserva a deteccao: arquivo IGNORADO nao
+ * aparece em `--others`, entao a rota engolida pelo .gitignore continua faltando
+ * da lista e continua reprovando. Foi assim que duas rotas de credencial
+ * viraram 404 em producao.
+ *
+ * `null` quando o Git nao esta disponivel -- dentro da imagem, `.git` nao existe.
+ */
+function visiveisParaOGit(): Set<string> | null {
   try {
-    const saida = execFileSync("git", ["ls-files", "src/app/api"], {
+    const saida = execFileSync(
+      "git",
+      ["ls-files", "--cached", "--others", "--exclude-standard", "src/app/api"],
+      {
       cwd: join(__dirname, "..", "..", ".."),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -49,18 +67,19 @@ function rastreadasPeloGit(): Set<string> | null {
 }
 
 describe("rotas de API versionadas", () => {
-  it("nenhuma rota existe no disco sem estar no Git", () => {
-    const rastreadas = rastreadasPeloGit();
-    if (rastreadas === null) return; // sem Git: nada a verificar
+  it("nenhuma rota existe no disco sem o Git enxergar", () => {
+    const visiveis = visiveisParaOGit();
+    if (visiveis === null) return; // sem Git: nada a verificar
 
     const raizWeb = join(__dirname, "..", "..", "..");
     const ausentes = rotasNoDisco(RAIZ_API)
       .map((p) => relative(raizWeb, p).split(sep).join("/"))
-      .filter((p) => !rastreadas.has(p));
+      .filter((p) => !visiveis.has(p));
 
     expect(
       ausentes,
-      "Rota(s) de API fora do Git. Quase sempre e regra do .gitignore casando " +
+      "Rota(s) de API invisiveis para o Git -- nem rastreadas, nem passiveis " +
+        "de `git add`. E regra do .gitignore casando " +
         "um segmento do caminho. Confira com: git check-ignore -v <caminho>",
     ).toEqual([]);
   });

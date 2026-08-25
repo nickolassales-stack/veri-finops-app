@@ -18,6 +18,7 @@ import {
 import type {
   EntradaColetaOvh,
   EntradaCredencialOvh,
+  EntradaNovaContaOvh,
 } from "@/lib/filtros/esquemas-credenciais";
 import { ehEndpointOvh, type EndpointOvh } from "@/lib/ovh/endpoints";
 import { sanitizar, validarCredencialOvh } from "@/lib/ovh/api";
@@ -40,7 +41,11 @@ import {
   type LinhaCredencialEnvelope,
   type StatusCredencial,
 } from "@/lib/queries/admin/credenciais";
-import { listarContasAdministraveis, type ContaAdministravel } from "@/lib/queries/admin/contas";
+import {
+  criarConta,
+  listarContasAdministraveis,
+  type ContaAdministravel,
+} from "@/lib/queries/admin/contas";
 import type { ContaCredencial } from "@/lib/diagnostico/credenciais-ovh";
 
 /**
@@ -751,4 +756,172 @@ export async function getOrigemCredenciaisOvh(): Promise<ContaCredencial[]> {
       };
     }),
   );
+}
+
+
+// ============================================ criacao de conta OVH pelo portal
+
+export type ResultadoCriacaoConta = {
+  conta: ContaComCredencial;
+  /** `null` quando a conta foi criada sem credencial. */
+  credencial: CredencialOvhVisivel | null;
+  /** Contas que ja usam a MESMA application key. Vazio no caso normal. */
+  avisoContasDuplicadas: string[];
+  /** `null` quando nao se pediu coleta, ou quando a fila nao existe. */
+  coleta: { jobId: string; criado: boolean } | null;
+  /** Por que a coleta pedida nao aconteceu. `null` quando aconteceu ou nao foi pedida. */
+  coletaIndisponivel: string | null;
+};
+
+/**
+ * Cria a conta OVH e, se vieram chaves, grava a credencial cifrada.
+ *
+ * ---------------------------------------------------------------------------
+ * A ORDEM IMPORTA, E ELA NAO E REVERSIVEL
+ *
+ * A conta e criada PRIMEIRO porque a credencial referencia `account_id` e o AAD
+ * da cifragem inclui a conta -- nao ha como cifrar antes de saber para quem.
+ *
+ * Isso cria uma janela: a conta existe e a credencial falhou. NAO desfazemos a
+ * conta nesse caso, e a escolha e deliberada. Apagar a conta destruiria tambem
+ * os metadados que o operador acabou de digitar, e o obrigaria a redigitar tudo
+ * por causa de uma chave colada errado. O estado resultante -- conta na lista,
+ * marcada "Credenciais nao configuradas" -- e visivel, nomeado e recuperavel com
+ * dois cliques no proprio cartao.
+ *
+ * Uma transacao unica resolveria a janela, mas o pool aqui nao expoe transacao e
+ * introduzi-la para este caso mudaria a camada de banco inteira. A troca esta
+ * certa enquanto o pior caso for "conta sem credencial", que a tela ja sabe
+ * mostrar.
+ *
+ * ---------------------------------------------------------------------------
+ * A COLETA E O ULTIMO PASSO, E FALHA SOZINHA
+ *
+ * Se a fila nao existir neste ambiente, a conta e a credencial JA FORAM salvas.
+ * Recusar tudo por causa da fila desfaria trabalho bom por causa de um recurso
+ * acessorio -- por isso o motivo volta em `coletaIndisponivel` em vez de virar
+ * excecao.
+ */
+export async function criarContaOvh(
+  entrada: EntradaNovaContaOvh,
+  usuarioId: string,
+): Promise<ResultadoCriacaoConta> {
+  const temCredencial = entrada.applicationKey !== undefined;
+
+  // Falhar ANTES de criar a conta quando a cifragem nao esta configurada: criar
+  // a conta e so entao descobrir que a chave nao pode ser gravada deixaria lixo
+  // para o operador limpar por um problema que e do servidor, nao dele.
+  if (temCredencial) exigirCifragem();
+
+  await criarConta({
+    accountId: entrada.accountId,
+    provider: PROVIDER,
+    accountName: entrada.alias,
+    businessUnit: entrada.businessUnit,
+    costCenter: entrada.costCenter,
+    environment: entrada.environment,
+  });
+
+  let credencial: CredencialOvhVisivel | null = null;
+  let avisoContasDuplicadas: string[] = [];
+
+  if (temCredencial) {
+    const gravacao = await saveOvhCredentials(
+      entrada.accountId,
+      {
+        endpoint: entrada.endpoint,
+        applicationKey: entrada.applicationKey,
+        applicationSecret: entrada.applicationSecret,
+        consumerKey: entrada.consumerKey,
+      },
+      usuarioId,
+    );
+    credencial = gravacao.credencial;
+    avisoContasDuplicadas = gravacao.avisoContasDuplicadas;
+  }
+
+  let coleta: ResultadoCriacaoConta["coleta"] = null;
+  let coletaIndisponivel: string | null = null;
+
+  if (entrada.coletarAgora) {
+    try {
+      const { job, criado } = await triggerOvhFirstSync(
+        entrada.accountId,
+        usuarioId,
+        "first_sync",
+      );
+      coleta = { jobId: job.id, criado };
+    } catch (e) {
+      coletaIndisponivel =
+        e instanceof ErroDeApi
+          ? e.message
+          : sanitizar(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const contas = await listCloudAccountsWithCredentialStatus(true);
+  const conta = contas.find((c) => c.accountId === entrada.accountId);
+  if (!conta) {
+    // Nao deveria acontecer: acabamos de cria-la. Se acontecer, e melhor dizer
+    // do que devolver um objeto inventado.
+    throw new ErroDeApi(
+      "erro-interno",
+      "A conta foi criada, mas nao foi possivel recarrega-la. Atualize a tela.",
+    );
+  }
+
+  return { conta, credencial, avisoContasDuplicadas, coleta, coletaIndisponivel };
+}
+
+
+/**
+ * Testa credencial AVULSA -- sem conta cadastrada, sem gravar nada.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE NAO DA PARA REUSAR `validateOvhCredentials`
+ *
+ * Aquela funcao chama `exigirContaOvh`, e com razao: ela existe para retestar a
+ * credencial de uma conta que ja existe, e para isso precisa poder reaproveitar
+ * o que esta gravado quando um campo vem em branco.
+ *
+ * No formulario de CRIACAO nao ha conta ainda. Testar antes de salvar e o
+ * comportamento certo -- descobrir que a chave esta errada depois de gravar
+ * deixaria uma credencial invalida no banco e um cadastro que ninguem pediu --,
+ * mas exige um caminho que nao consulte cadastro nenhum.
+ *
+ * Daqui NAO SAI e aqui NAO ENTRA persistencia: nenhuma linha e criada, nenhum
+ * status e atualizado. O unico efeito e uma chamada GET /me na OVH.
+ *
+ * Os tres segredos sao OBRIGATORIOS, e nao ha o que herdar. `planejarGravacao`
+ * com `temCadastro: false` produz exatamente essa exigencia, com detalhe por
+ * campo -- reusa-la evita que as duas telas discordem sobre o que e obrigatorio.
+ */
+export async function testarCredencialAvulsa(
+  entrada: EntradaCredencialOvh,
+): Promise<{ ok: boolean; mensagem: string; nichandle: string | null }> {
+  exigirCifragem();
+
+  const planejado = planejarGravacao(entrada, false);
+  if (!planejado.ok) throw new ErroDeValidacao(planejado.faltantes);
+
+  if (!ehEndpointOvh(entrada.endpoint)) {
+    throw new ErroDeApi("parametros-invalidos", "Endpoint OVH invalido.");
+  }
+
+  // Os tres estao presentes: `planejarGravacao` sem cadastro anterior nao aceita
+  // "manter", entao todo campo virou "substituir" com valor.
+  const resultado = await validarCredencialOvh({
+    endpoint: entrada.endpoint as EndpointOvh,
+    applicationKey: entrada.applicationKey as string,
+    applicationSecret: entrada.applicationSecret as string,
+    consumerKey: entrada.consumerKey as string,
+  });
+
+  return resultado.ok
+    ? {
+        ok: true,
+        mensagem: `Conexao bem-sucedida${resultado.nichandle ? ` com a conta ${resultado.nichandle}` : ""}.`,
+        nichandle: resultado.nichandle,
+      }
+    : { ok: false, mensagem: resultado.mensagem, nichandle: null };
 }

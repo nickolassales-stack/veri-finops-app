@@ -1,7 +1,7 @@
 import "server-only";
 
 import { ErroDeApi } from "@/lib/api/http";
-import { query, queryOne } from "@/lib/database";
+import { query, queryOne, queryOpcional } from "@/lib/database";
 
 import { aliasDisponivel, expressaoNomeDaConta, joinAlias } from "../alias-conta";
 
@@ -194,6 +194,98 @@ export async function salvarConfiguracaoDaConta(
     ],
   );
 
+  // A releitura passa por `lerConta` -- a mesma que a criacao usa. Duas copias
+  // da mesma consulta divergiriam na primeira coluna acrescentada ao SELECAO.
+  return lerConta(accountId);
+}
+
+
+// ------------------------------------------------- criacao de conta no portal
+
+export type NovaConta = {
+  accountId: string;
+  provider: "ovh";
+  accountName: string;
+  businessUnit?: string | null;
+  costCenter?: string | null;
+  environment?: string | null;
+};
+
+/**
+ * Cria uma conta em `cloud_accounts` -- hoje somente OVH.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE SO OVH
+ *
+ * Conta AWS nao se CADASTRA: ela existe porque entregou custo no CUR, e o
+ * identificador dela e o numero de 12 digitos que a AWS emitiu. Deixar alguem
+ * digitar um account_id AWS aqui criaria uma linha que nunca casa com dado
+ * nenhum -- uma conta fantasma no filtro do painel, somando zero para sempre.
+ * Ver a pendencia de auto-discovery em docs/CONTAS-CLOUD.md.
+ *
+ * A conta OVH e o oposto: o `account_id` e uma etiqueta escolhida por nos
+ * (`ovh-cliente-ca`), usada para amarrar credencial, jobs e custo. Ela precisa
+ * existir ANTES da primeira coleta, porque e ela que o collector procura.
+ *
+ * ---------------------------------------------------------------------------
+ * INSERT ... DO NOTHING, E NAO DO UPDATE
+ *
+ * Criar e diferente de editar. `DO UPDATE` transformaria um cadastro repetido --
+ * dois cliques, duas abas -- numa sobrescrita silenciosa do que ja estava la,
+ * inclusive de uma conta AWS existente que tivesse o mesmo id. Zero linhas
+ * devolvidas significa "ja existe", e o chamador transforma isso em erro com
+ * nome proprio.
+ */
+export async function criarConta(nova: NovaConta): Promise<ContaAdministravel> {
+  const criada = await queryOpcional<{ account_id: string }>(
+    `INSERT INTO cloud_accounts (account_id, account_name, provider, active)
+     VALUES ($1, $2, $3, true)
+         ON CONFLICT (account_id) DO NOTHING
+      RETURNING account_id`,
+    [nova.accountId, nova.accountName, nova.provider],
+  );
+
+  if (criada === null) {
+    throw new ErroDeApi(
+      "conflito",
+      `Ja existe uma conta com o identificador "${nova.accountId}". ` +
+        "Escolha outro, ou edite a conta existente na lista.",
+    );
+  }
+
+  // Metadados vao para `app_account_settings`, o mesmo lugar em que a edicao os
+  // grava -- e nao para as colunas homonimas de `cloud_accounts`. Duas origens
+  // para o mesmo campo fariam a conta nova exibir um valor que o formulario de
+  // edicao nao consegue alterar.
+  const limpar = (v: string | null | undefined) => {
+    if (v === undefined || v === null) return null;
+    const s = v.trim();
+    return s === "" ? null : s;
+  };
+
+  await query(
+    `INSERT INTO app_account_settings (account_id, alias, business_unit, cost_center, environment)
+     VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (account_id) DO UPDATE SET
+           alias         = EXCLUDED.alias,
+           business_unit = EXCLUDED.business_unit,
+           cost_center   = EXCLUDED.cost_center,
+           environment   = EXCLUDED.environment,
+           updated_at    = now()`,
+    [
+      nova.accountId,
+      limpar(nova.accountName),
+      limpar(nova.businessUnit),
+      limpar(nova.costCenter),
+      limpar(nova.environment),
+    ],
+  );
+
+  return lerConta(nova.accountId);
+}
+
+/** Uma conta pelo id, ja com a cascata de nome resolvida. */
+export async function lerConta(accountId: string): Promise<ContaAdministravel> {
   const amarracao = { colunaId: "a.account_id", cadastro: "a" };
   const linha = await queryOne<LinhaConta>(
     `SELECT ${SELECAO},
@@ -203,6 +295,35 @@ export async function salvarConfiguracaoDaConta(
       WHERE a.account_id = $1`,
     [accountId],
   );
-
   return mapear(linha);
+}
+
+/**
+ * Contas AWS que TEM custo importado mas NAO estao em `cloud_accounts`.
+ *
+ * ---------------------------------------------------------------------------
+ * ISTO MEDE UMA LACUNA REAL DO PIPELINE
+ *
+ * O ETL nao cadastra conta. `scripts/onboard-cur-account.sh` diz isso na propria
+ * saida ("o ETL nao cadastra contas; a aplicacao faz LEFT JOIN em
+ * cloud_accounts") e imprime um INSERT para um humano executar. Se ninguem
+ * executar, a conta some das telas que leem o cadastro -- Contas Cloud,
+ * Faturamento, filtros -- enquanto o custo dela entra normalmente nos totais.
+ *
+ * O sintoma e cruel: o numero do painel sobe e nao ha conta a que atribui-lo.
+ *
+ * Esta consulta nao CORRIGE nada -- inserir sozinho seria adivinhar o alias e o
+ * provider de uma conta que ninguem cadastrou. Ela apenas expoe a divergencia na
+ * tela, para que o passo manual pare de ser invisivel.
+ */
+export async function contasComCustoSemCadastro(): Promise<string[]> {
+  const linhas = await query<{ account_id: string }>(
+    `SELECT DISTINCT d.account_id
+       FROM aws_daily_costs d
+       LEFT JOIN cloud_accounts a ON a.account_id = d.account_id
+      WHERE a.account_id IS NULL
+      ORDER BY d.account_id
+      LIMIT 50`,
+  );
+  return linhas.map((l) => l.account_id);
 }

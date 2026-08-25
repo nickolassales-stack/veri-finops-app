@@ -1,78 +1,87 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
+import { CabecalhoContas } from "@/components/admin/contas/cabecalho-contas";
+import { CartaoConta, type Conta } from "@/components/admin/contas/cartao-conta";
+import { ComoFunciona } from "@/components/admin/contas/como-funciona";
+import { ModalAdicionarAws } from "@/components/admin/contas/modal-adicionar-aws";
+import { ModalAdicionarOvh } from "@/components/admin/contas/modal-adicionar-ovh";
+import { ResumoContas } from "@/components/admin/contas/resumo-contas";
 import { Aviso } from "@/components/ui/aviso";
 import { Botao } from "@/components/ui/botao";
-import { Campo } from "@/components/ui/campo";
-import { Card } from "@/components/ui/card";
 import { CarregandoLinhas, ErroDoBloco, Vazio } from "@/components/ui/estado";
-import { SeloProvider } from "@/components/ui/selo-provider";
-import { escrever, ler, mensagemDoErro } from "@/lib/admin/cliente";
+import { ler, mensagemDoErro } from "@/lib/admin/cliente";
 import {
-  BlocoCredenciaisOvh,
-  type CredencialVisivel,
-} from "@/components/admin/bloco-credenciais-ovh";
-// De `@/lib/billing/pagamento`, que e puro -- e NAO de `esquemas-admin`, que
-// puxa `password.mjs` e com ele o `node:crypto` para dentro do navegador.
-import { ROTULO_STATUS } from "@/lib/billing/pagamento";
+  lerProvider,
+  resumoContas,
+  textoListaVazia,
+  type Provider,
+} from "@/lib/admin/contas-provider";
 
-type Conta = {
-  accountId: string;
-  nomeExibicao: string;
-  alias: string | null;
-  accountName: string;
-  businessUnit: string | null;
-  costCenter: string | null;
-  environment: string | null;
-  invoiceCloseDay: number | null;
-  paymentStatus: string | null;
-  paymentStatusUpdatedAt: string | null;
-  ativa: boolean;
-  configurada: boolean;
-  /** Somente leitura aqui -- ver o comentario do tipo em queries/admin/contas.ts. */
-  provider: string;
-  /**
-   * `null` em tres situacoes que a tela distingue com ajuda de `provider` e de
-   * `podeVerCredenciais`: conta AWS (nao se aplica), conta OVH sem cadastro, e
-   * usuario nao-ADMIN (o servidor nao envia o campo).
-   */
-  credencial: CredencialVisivel | null;
-};
+/**
+ * Contas Cloud — segmentada por provedor.
+ *
+ * ---------------------------------------------------------------------------
+ * O QUE MUDOU, E POR QUE
+ *
+ * Havia UMA lista com AWS e OVH juntas. Ela funcionava e era ilegível: metade
+ * dos cartões trazia bloco de credencial e metade não, sem que a diferença
+ * aparecesse em lugar nenhum, e não havia caminho para adicionar conta. Quem
+ * procurava onde colar a chave da AWS concluía que faltava um campo — quando a
+ * resposta é que ele não existe.
+ *
+ * Agora são duas visões, escolhidas pela URL, com listas, ações e textos
+ * próprios. O provedor sai de `?provider=`, como no painel executivo e no
+ * Analítico, e pelo mesmo motivo: a visão fica no endereço, então ela sobrevive
+ * a recarregar, a voltar e a mandar o link para alguém.
+ *
+ * ---------------------------------------------------------------------------
+ * A LISTA É FILTRADA NO SERVIDOR
+ *
+ * `?provider=` vai junto na requisição. Filtrar só aqui mandaria a lista OVH
+ * inteira — com a situação de cada credencial — para quem abriu a visão AWS, e a
+ * separação seria cosmética: o dado do outro provedor estaria no payload,
+ * visível em qualquer aba de rede.
+ *
+ * Os totais dos cartões vêm da meta, calculados sobre TODAS as contas: trocar de
+ * visão não pode zerar o cartão do outro provedor.
+ */
 
 type MetaContas = {
   podeVerCredenciais?: boolean;
   ultimaSincronizacaoOvh?: string | null;
+  contasAws?: number;
   contasOvh?: number;
+  coletasComFalha?: number | null;
+  filaDisponivel?: boolean;
+  contasComCustoSemCadastro?: string[];
 };
 
-/**
- * O banco garante a lista pelo CHECK, mas a API tipa `paymentStatus` como
- * string: se o CHECK mudar sem a tela saber, exibir o valor cru e melhor do que
- * quebrar a renderizacao inteira por uma chave que faltou no mapa.
- */
-function rotuloPagamento(valor: string): string {
-  return (ROTULO_STATUS as Record<string, string>)[valor] ?? valor;
-}
-
 export function PainelContas() {
+  const provider: Provider = lerProvider(useSearchParams());
+
   const [contas, setContas] = useState<Conta[] | null>(null);
   const [meta, setMeta] = useState<MetaContas>({});
   const [erro, setErro] = useState<string | null>(null);
-  const [editando, setEditando] = useState<string | null>(null);
+  const [adicionando, setAdicionando] = useState(false);
 
   const [gatilho, setGatilho] = useState(0);
   const recarregar = useCallback(() => setGatilho((n) => n + 1), []);
 
   /**
-   * Carga dentro do proprio efeito, como em `use-analitico.ts`.
+   * Carga dentro do próprio efeito, como em `use-analitico.ts`.
    *
-   * A funcao assincrona e definida AQUI e nao extraida para um `useCallback`:
-   * chamar de fora uma funcao que faz setState conta como setState sincrono no
-   * corpo do efeito, o que provoca render em cascata. Recarregar e um contador.
+   * A função assíncrona é definida AQUI e não extraída para um `useCallback`:
+   * chamar de fora uma função que faz setState conta como setState síncrono no
+   * corpo do efeito, o que provoca render em cascata. Recarregar é um contador.
    *
-   * `vivo` descarta a resposta de um efeito ja desmontado -- sem isso, sair da
-   * tela durante a carga tentaria atualizar componente que nao existe mais.
+   * `vivo` descarta a resposta de um efeito já desmontado — sem isso, sair da
+   * tela durante a carga tentaria atualizar componente que não existe mais.
+   *
+   * `provider` está nas dependências: trocar de visão refaz a busca com o filtro
+   * novo, em vez de reaproveitar a lista do outro provedor.
    */
   useEffect(() => {
     let vivo = true;
@@ -80,7 +89,7 @@ export function PainelContas() {
     void (async () => {
       try {
         const { dados, meta: recebido } = await ler<Conta[], MetaContas>(
-          "/api/admin/accounts",
+          `/api/admin/accounts?provider=${provider}`,
         );
         if (!vivo) return;
         setErro(null);
@@ -96,263 +105,111 @@ export function PainelContas() {
     return () => {
       vivo = false;
     };
-  }, [gatilho]);
+  }, [gatilho, provider]);
 
   /** Troca a conta no lugar, sem recarregar a lista inteira. */
-  const substituir = (atualizada: Conta) => {
+  const substituir = (atualizada: Conta) =>
     setContas((atual) =>
       (atual ?? []).map((c) => (c.accountId === atualizada.accountId ? atualizada : c)),
     );
-    setEditando(null);
+
+  const resumo = resumoContas(
+    // Os totais vêm da meta; a lista local está filtrada e serviria apenas ao
+    // provedor visível. Este arranjo alimenta `resumoContas` com o que ela sabe
+    // contar e deixa os totais globais chegarem prontos.
+    contas ?? [],
+    {
+      podeVerCredenciais: meta.podeVerCredenciais ?? false,
+      coletasComFalha: meta.coletasComFalha ?? null,
+    },
+  );
+  const resumoGlobal = {
+    ...resumo,
+    contasAws: meta.contasAws ?? resumo.contasAws,
+    contasOvh: meta.contasOvh ?? resumo.contasOvh,
   };
 
-  /**
-   * Atualiza SO a credencial de uma conta.
-   *
-   * Separado de `substituir` porque o bloco de credenciais nao fecha o modo de
-   * edicao: depois de salvar a credencial o operador quase sempre clica em
-   * "Testar conexao" em seguida, e fechar o painel o obrigaria a reabrir.
-   */
-  const substituirCredencial = (accountId: string, nova: CredencialVisivel | null) => {
-    setContas((atual) =>
-      (atual ?? []).map((c) => (c.accountId === accountId ? { ...c, credencial: nova } : c)),
-    );
-  };
-
-  if (erro && !contas?.length) {
-    return <ErroDoBloco mensagem={erro} aoTentarNovamente={recarregar} />;
-  }
-  if (contas === null) return <CarregandoLinhas linhas={3} />;
-  if (contas.length === 0) {
-    return (
-      <Vazio titulo="Nenhuma conta cloud no cadastro">
-        As contas vêm de <span className="veri-numero">cloud_accounts</span>. Enquanto não
-        houver nenhuma lá, não há o que configurar aqui.
-      </Vazio>
-    );
-  }
+  const vazio = textoListaVazia(provider);
+  const semCadastro = meta.contasComCustoSemCadastro ?? [];
 
   return (
-    <div className="space-y-5">
-      <Aviso tom="info" titulo="O alias vale em todo o portal">
-        <p>
-          O nome definido aqui substitui o do cadastro nos filtros, nos cards, na tabela
-          analítica e nos arquivos exportados. O <strong>ID da conta</strong> continua
-          sempre visível ao lado — é ele que identifica a conta no provedor.
-        </p>
-        <p>
-          Esta lista traz <strong>todos os provedores</strong>. O selo ao lado de cada
-          conta diz qual é. Contas OVH aparecem aqui e em Faturamento, mas não nos
-          filtros do painel executivo nem do analítico, que hoje leem apenas dados AWS.
-          O provedor em si não é editável: trocá-lo desligaria a conta da sua origem de
-          dado.
-        </p>
-        <p>
-          Contas <strong>OVH</strong> têm, além disso, um bloco de{" "}
-          <strong>credenciais de API</strong>, restrito a administradores. Contas{" "}
-          <strong>AWS</strong> não têm esse bloco e não é omissão: a AWS autentica por
-          IAM role da instância, sem segredo para guardar no portal.
-        </p>
-      </Aviso>
+    <div className="space-y-6">
+      <CabecalhoContas provider={provider} />
 
-      {contas.map((conta) => (
-        <Card
-          key={conta.accountId}
-          titulo={conta.nomeExibicao}
-          descricao={`ID ${conta.accountId}${conta.ativa ? "" : " · inativa no cadastro"}`}
-          acao={
-            <div className="flex items-center gap-2">
-              <SeloProvider provider={conta.provider} />
-              <Botao
-                tom="secundario"
-                onClick={() =>
-                  setEditando((atual) => (atual === conta.accountId ? null : conta.accountId))
-                }
-                aria-expanded={editando === conta.accountId}
-              >
-                {editando === conta.accountId ? "Fechar" : "Editar"}
-              </Botao>
-            </div>
-          }
-        >
-          {editando === conta.accountId ? (
-            <FormularioConta conta={conta} aoSalvar={substituir} />
-          ) : (
-            <ResumoConta conta={conta} />
-          )}
+      <ResumoContas resumo={resumoGlobal} />
 
-          {/*
-            So conta OVH, e so para ADMIN. As duas condicoes sao independentes: a
-            primeira e sobre o que o bloco significa (a AWS nao tem credencial a
-            guardar), a segunda e sobre quem pode ve-lo.
+      <ComoFunciona />
 
-            `podeVerCredenciais` vem do SERVIDOR e nao de uma inferencia local.
-            Sem ele, "nao ha credencial cadastrada" e "voce nao pode ver as
-            credenciais" seriam indistinguiveis para a tela -- e ela mostraria o
-            formulario vazio a um nao-ADMIN, cujo envio voltaria 403.
-          */}
-          {conta.provider === "ovh" && meta.podeVerCredenciais && (
-            <BlocoCredenciaisOvh
-              accountId={conta.accountId}
-              credencial={conta.credencial}
-              ultimaSincronizacao={meta.ultimaSincronizacaoOvh ?? null}
-              aoMudar={(nova) => substituirCredencial(conta.accountId, nova)}
-            />
-          )}
-
-          {conta.provider === "ovh" && !meta.podeVerCredenciais && (
-            <p className="mt-4 border-t border-veri-offwhite pt-3 text-xs text-texto-suave">
-              Esta conta tem credenciais de API. Somente administradores podem
-              consultá-las ou alterá-las.
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="veri-display text-xl text-veri-verde-escuro">
+              {provider === "ovh" ? "Contas OVH" : "Contas AWS"}
+            </h3>
+            <p className="mt-1 max-w-2xl text-sm text-texto-suave">
+              {provider === "ovh"
+                ? "Contas OVH são cadastradas no portal com credenciais API criptografadas e podem disparar coleta manual."
+                : "Contas AWS são descobertas pelo pipeline a partir do CUR/Data Export — o cadastro final ainda é um passo manual."}
             </p>
-          )}
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function ResumoConta({ conta }: { conta: Conta }) {
-  const itens: { rotulo: string; valor: string }[] = [
-    { rotulo: "Provedor", valor: conta.provider.toUpperCase() },
-    { rotulo: "ID da conta", valor: conta.accountId },
-    {
-      rotulo: "Alias",
-      valor: conta.alias ?? `— (usando "${conta.accountName}" do cadastro)`,
-    },
-    { rotulo: "Unidade de negócio", valor: conta.businessUnit ?? "—" },
-    { rotulo: "Centro de custo", valor: conta.costCenter ?? "—" },
-    { rotulo: "Ambiente", valor: conta.environment ?? "—" },
-    {
-      rotulo: "Fechamento da fatura",
-      valor: conta.invoiceCloseDay ? `dia ${conta.invoiceCloseDay}` : "—",
-    },
-    {
-      rotulo: "Pagamento",
-      valor: conta.paymentStatus
-        ? `${rotuloPagamento(conta.paymentStatus)}${
-            conta.paymentStatusUpdatedAt
-              ? ` · desde ${new Date(conta.paymentStatusUpdatedAt).toLocaleDateString("pt-BR")}`
-              : ""
-          }`
-        : "—",
-    },
-  ];
-
-  return (
-    <>
-      <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-        {itens.map((i) => (
-          <div key={i.rotulo}>
-            <dt className="text-xs uppercase tracking-wide text-texto-suave">{i.rotulo}</dt>
-            <dd className="mt-0.5 text-sm text-veri-verde-escuro">{i.valor}</dd>
           </div>
-        ))}
-      </dl>
 
-      {/* Os dois ultimos aparecem aqui e sao editados em Faturamento. Deixar o
-          campo editavel nas duas telas significaria que `settings:accounts`
-          altera dado de faturamento sem ter `billing:manage`. */}
-      <p className="mt-4 text-xs text-texto-suave">
-        Fechamento e situação de pagamento são editados em{" "}
-        <a href="/dashboard/billing" className="underline">
-          Faturamento
-        </a>
-        , com a permissão <span className="veri-numero">billing:manage</span>.
-      </p>
-    </>
-  );
-}
+          <Botao onClick={() => setAdicionando(true)}>
+            {provider === "ovh" ? "Adicionar conta OVH" : "Adicionar conta AWS"}
+          </Botao>
+        </div>
 
-function FormularioConta({
-  conta,
-  aoSalvar,
-}: {
-  conta: Conta;
-  aoSalvar: (c: Conta) => void;
-}) {
-  const [alias, setAlias] = useState(conta.alias ?? "");
-  const [unidade, setUnidade] = useState(conta.businessUnit ?? "");
-  const [centro, setCentro] = useState(conta.costCenter ?? "");
-  const [ambiente, setAmbiente] = useState(conta.environment ?? "");
+        {/* A lacuna real do pipeline, exposta só quando existe. Ver
+            `contasComCustoSemCadastro` em queries/admin/contas.ts. */}
+        {provider === "aws" && semCadastro.length > 0 && (
+          <Aviso
+            tom="atencao"
+            titulo={`${semCadastro.length} conta(s) com custo importado, mas fora do cadastro`}
+          >
+            <p>
+              <span className="veri-numero">{semCadastro.join(", ")}</span> tem custo em{" "}
+              <span className="veri-numero">aws_daily_costs</span> e não está em{" "}
+              <span className="veri-numero">cloud_accounts</span>. O custo entra nos
+              totais, mas a conta não aparece nesta lista nem nos filtros — e ninguém
+              consegue dar alias a ela.
+            </p>
+            <p>
+              O ETL não cadastra contas; o <span className="veri-numero">INSERT</span> é o
+              passo 8 do procedimento em <strong>Adicionar conta AWS</strong>.
+            </p>
+          </Aviso>
+        )}
 
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState(false);
+        {erro && !contas?.length ? (
+          <ErroDoBloco mensagem={erro} aoTentarNovamente={recarregar} />
+        ) : contas === null ? (
+          <CarregandoLinhas linhas={3} />
+        ) : contas.length === 0 ? (
+          <Vazio titulo={vazio.titulo}>{vazio.detalhe}</Vazio>
+        ) : (
+          <div className="space-y-4">
+            {contas.map((conta) => (
+              <CartaoConta
+                key={conta.accountId}
+                conta={conta}
+                provider={provider}
+                podeVerCredenciais={meta.podeVerCredenciais ?? false}
+                ultimaSincronizacao={meta.ultimaSincronizacaoOvh ?? null}
+                aoAtualizar={substituir}
+              />
+            ))}
+          </div>
+        )}
+      </section>
 
-  async function enviar(evento: React.FormEvent) {
-    evento.preventDefault();
-    setSalvando(true);
-    setErro(null);
-    setSucesso(false);
-
-    try {
-      const atualizada = await escrever<Conta>(
-        `/api/admin/accounts/${encodeURIComponent(conta.accountId)}`,
-        "PATCH",
-        {
-          alias: alias.trim() || null,
-          businessUnit: unidade.trim() || null,
-          costCenter: centro.trim() || null,
-          environment: ambiente.trim() || null,
-        },
-      );
-      setSucesso(true);
-      aoSalvar(atualizada);
-    } catch (e) {
-      setErro(mensagemDoErro(e));
-    } finally {
-      setSalvando(false);
-    }
-  }
-
-  return (
-    <form onSubmit={enviar} className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Campo
-          rotulo="Alias"
-          value={alias}
-          onChange={(e) => setAlias(e.target.value)}
-          maxLength={120}
-          placeholder={conta.accountName}
-          ajuda={
-            <>
-              Deixe em branco para voltar a usar{" "}
-              <span className="veri-numero">{conta.accountName}</span>, o nome do cadastro.
-            </>
-          }
+      {provider === "aws" ? (
+        <ModalAdicionarAws aberto={adicionando} aoFechar={() => setAdicionando(false)} />
+      ) : (
+        <ModalAdicionarOvh
+          aberto={adicionando}
+          aoFechar={() => setAdicionando(false)}
+          aoCriar={recarregar}
         />
-        <Campo
-          rotulo="Unidade de negócio"
-          value={unidade}
-          onChange={(e) => setUnidade(e.target.value)}
-          maxLength={120}
-        />
-        <Campo
-          rotulo="Centro de custo"
-          value={centro}
-          onChange={(e) => setCentro(e.target.value)}
-          maxLength={120}
-        />
-        <Campo
-          rotulo="Ambiente"
-          value={ambiente}
-          onChange={(e) => setAmbiente(e.target.value)}
-          maxLength={60}
-          placeholder="prod, homologacao, dev…"
-        />
-      </div>
-
-      {erro && <ErroDoBloco titulo="Não foi possível salvar" mensagem={erro} />}
-      {sucesso && !erro && (
-        <p role="status" className="text-sm font-medium text-veri-verde-escuro">
-          Alterações salvas. O novo nome já vale nos filtros e nas exportações.
-        </p>
       )}
-
-      <Botao type="submit" carregando={salvando}>
-        Salvar alterações
-      </Botao>
-    </form>
+    </div>
   );
 }

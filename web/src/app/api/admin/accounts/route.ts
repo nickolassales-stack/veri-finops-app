@@ -1,12 +1,22 @@
-import { rotaComPermissao } from "@/lib/api/rota";
+import { analisar } from "@/lib/api/http";
+import { rotaComPermissao, rotaSomenteAdmin } from "@/lib/api/rota";
 import { ehAdminAtual } from "@/lib/auth/autorizacao";
+import {
+  esquemaNovaContaOvh,
+  esquemaProviderConsulta,
+} from "@/lib/filtros/esquemas-credenciais";
+import { contasComCustoSemCadastro } from "@/lib/queries/admin/contas";
+import { contarFalhasRecentes, filaDisponivel } from "@/lib/queries/admin/jobs-sync";
 import { ovhInstaladoNoBanco } from "@/lib/queries/dashboard-ovh";
 import { getUltimoSucessoOvh } from "@/lib/queries/ovh";
-import { listCloudAccountsWithCredentialStatus } from "@/lib/services/credenciais-ovh";
+import {
+  criarContaOvh,
+  listCloudAccountsWithCredentialStatus,
+} from "@/lib/services/credenciais-ovh";
 
 /**
- * GET /api/admin/accounts -- contas de TODOS os provedores com os metadados do
- * portal, e a situacao da credencial quando quem pergunta e ADMIN.
+ * GET  /api/admin/accounts        -- contas com metadados e situacao da credencial
+ * POST /api/admin/accounts        -- cria uma conta OVH
  *
  * A lista sai inteira de `cloud_accounts`: nenhum id de conta e fixo no codigo.
  *
@@ -32,9 +42,23 @@ export const runtime = "nodejs";
 export const GET = rotaComPermissao(
   "GET /api/admin/accounts",
   "settings:accounts",
-  async () => {
+  async ({ url }) => {
+    // `?provider=` FILTRA NO SERVIDOR. Filtrar so na tela mandaria a lista OVH
+    // inteira -- com a situacao de cada credencial -- para quem abriu a visao
+    // AWS, e a separacao viraria cosmetica: o dado do outro provedor estaria no
+    // payload, visivel em qualquer aba de rede.
+    const provider = analisar(
+      esquemaProviderConsulta,
+      url.searchParams.get("provider") ?? undefined,
+    );
+
     const admin = await ehAdminAtual();
-    const contas = await listCloudAccountsWithCredentialStatus(admin);
+    const todas = await listCloudAccountsWithCredentialStatus(admin);
+    const contas = provider
+      ? todas.filter((c) =>
+          provider === "ovh" ? c.provider === "ovh" : c.provider !== "ovh",
+        )
+      : todas;
 
     // "Ultima sincronizacao" sai DAQUI e nao de uma segunda chamada a
     // /api/dashboard/ovh/sync-status. Dois motivos: aquela rota exige
@@ -49,18 +73,71 @@ export const GET = rotaComPermissao(
         ? ((await getUltimoSucessoOvh())?.finishedAt ?? null)
         : null;
 
+    // A fila pode nao existir (migracao 008 nao aplicada). `null` e nao `0`: zero
+    // AFIRMA que nao ha falha, e afirmar isso sem ter consultado seria mentira.
+    const temFila = await filaDisponivel();
+    const coletasComFalha = temFila ? await contarFalhasRecentes() : null;
+
+    // Contas com custo importado que ninguem cadastrou. Ver a pendencia de
+    // auto-discovery em `contasComCustoSemCadastro`.
+    const semCadastro = await contasComCustoSemCadastro();
+
     return {
       dados: contas,
       meta: {
         total: contas.length,
+        // Os totais por provedor sao dos NAO FILTRADOS: os cartoes do topo
+        // resumem o ambiente, e trocar de visao nao pode zerar o cartao do outro
+        // provedor -- o numero pareceria ter caido a zero.
+        contasAws: todas.filter((c) => c.provider !== "ovh").length,
+        contasOvh: todas.filter((c) => c.provider === "ovh").length,
         ultimaSincronizacaoOvh,
         // A tela precisa saber POR QUE nao recebeu credencial nenhuma: sem esta
         // bandeira, "nenhuma conta OVH tem credencial" e "voce nao pode ver as
         // credenciais" chegam identicos, e a primeira leitura mandaria um
         // operador cadastrar algo que ja existe.
         podeVerCredenciais: admin,
-        contasOvh: contas.filter((c) => c.provider === "ovh").length,
+        filaDisponivel: temFila,
+        coletasComFalha,
+        contasComCustoSemCadastro: semCadastro,
       },
+    };
+  },
+);
+
+/**
+ * POST /api/admin/accounts -- cria uma conta OVH.
+ *
+ * ---------------------------------------------------------------------------
+ * SOMENTE ADMIN, e nao `settings:accounts`
+ *
+ * O corpo carrega os TRES SEGREDOS da API OVH. `settings:accounts` e delegavel a
+ * qualquer grupo, e um grupo pode conter um VIEWER -- entao ela nao consegue
+ * expressar "so ADMIN". Mesma razao de `rotaSomenteAdmin` nas demais rotas de
+ * credencial. Ver lib/auth/permissoes.ts e rbac-credenciais.test.ts.
+ *
+ * ---------------------------------------------------------------------------
+ * SO OVH, POR DESENHO
+ *
+ * Nao existe POST para conta AWS, e a ausencia e proposital. Conta AWS nao se
+ * cadastra: ela existe porque entregou custo no CUR, com um id de 12 digitos que
+ * a AWS emitiu. Um formulario aqui criaria uma linha que nunca casa com dado
+ * nenhum -- conta fantasma no filtro, somando zero para sempre.
+ *
+ * O botao "Adicionar conta AWS" da tela abre o procedimento operacional, que e o
+ * que de fato faz a conta existir. A pendencia real -- o ETL nao cadastra a conta
+ * automaticamente depois que o custo chega -- esta documentada em
+ * docs/CONTAS-CLOUD.md e exposta na tela pelo `contasComCustoSemCadastro`.
+ */
+export const POST = rotaSomenteAdmin(
+  "POST /api/admin/accounts",
+  async ({ corpo, sessao }) => {
+    const entrada = analisar(esquemaNovaContaOvh, corpo);
+    const resultado = await criarContaOvh(entrada, sessao.userId);
+
+    return {
+      dados: resultado,
+      meta: { accountId: entrada.accountId, criadaEm: new Date().toISOString() },
     };
   },
 );

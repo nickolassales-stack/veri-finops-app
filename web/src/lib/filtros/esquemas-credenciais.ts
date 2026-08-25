@@ -129,3 +129,84 @@ export const esquemaColetaOvh = z.discriminatedUnion("scope", [
 ]);
 
 export type EntradaColetaOvh = z.output<typeof esquemaColetaOvh>;
+
+// ------------------------------------------------------ criacao de conta OVH
+
+/**
+ * Cadastro de uma conta OVH pelo portal.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE ESTE ESQUEMA MORA AQUI, E NAO EM `esquemas-admin`
+ *
+ * Ele carrega os TRES SEGREDOS. `esquemas-admin` importa `password.mjs`, que
+ * arrasta `node:crypto`, e por isso nenhum componente de cliente consegue
+ * importa-lo -- o formulario de "Adicionar conta OVH" precisa dos mesmos limites
+ * de tamanho para validar antes de enviar. Este arquivo e puro.
+ *
+ * ---------------------------------------------------------------------------
+ * O QUE E OBRIGATORIO, E POR QUE
+ *
+ * `accountId`, `alias` e `endpoint` sao exigidos: sem os tres nao ha conta
+ * utilizavel. Os SEGREDOS sao opcionais, e isso e deliberado -- permite cadastrar
+ * a conta agora e colar as chaves depois, quando quem tem acesso a OVH estiver
+ * disponivel. A conta aparece na lista com "Credenciais nao configuradas", que e
+ * um estado honesto e visivel, em vez de bloquear o cadastro inteiro.
+ *
+ * `provider` NAO esta no esquema. Esta rota cria conta OVH e so isso: aceitar o
+ * campo abriria a porta para criar conta AWS pelo portal, que nao e cadastro --
+ * e descoberta a partir do custo. Ver `esquemaNovaContaOvh` no route.
+ */
+export const esquemaNovaContaOvh = z
+  .object({
+    // Mesmo formato de `esquemaIdDeConta`, repetido aqui porque este arquivo
+    // nao pode importar `esquemas-admin` (ver acima). O banco e a fonte final:
+    // `cloud_accounts.account_id` e varchar(20).
+    accountId: z
+      .string()
+      .trim()
+      .regex(
+        /^[A-Za-z0-9_-]{1,20}$/,
+        "Use ate 20 caracteres entre letras, numeros, hifen e sublinhado. Ex.: ovh-cliente-ca",
+      ),
+    alias: z.string().trim().min(1, "Informe um nome para a conta").max(120),
+    businessUnit: z.string().trim().max(120).optional(),
+    costCenter: z.string().trim().max(120).optional(),
+    environment: z.string().trim().max(60).optional(),
+    endpoint: z.enum(ENDPOINTS_OVH, {
+      error: () => `endpoint deve ser um de: ${ENDPOINTS_OVH.join(", ")}.`,
+    }),
+    applicationKey: segredo("Application Key"),
+    applicationSecret: segredo("Application Secret"),
+    consumerKey: segredo("Consumer Key"),
+    /** Enfileira a primeira coleta logo apos salvar. */
+    coletarAgora: z.boolean().default(false),
+  })
+  .strict()
+  // Os tres segredos andam JUNTOS. Gravar so a application key deixaria uma
+  // credencial pela metade, que falha na primeira chamada com um erro da OVH
+  // dificil de ligar a causa. Ou vem os tres, ou nenhum.
+  .refine(
+    (o) => {
+      const presentes = [o.applicationKey, o.applicationSecret, o.consumerKey].filter(
+        (v) => v !== undefined,
+      ).length;
+      return presentes === 0 || presentes === 3;
+    },
+    {
+      message:
+        "Informe as tres chaves (Application Key, Application Secret e Consumer Key) ou deixe as tres em branco para cadastrar a conta sem credencial.",
+      path: ["applicationKey"],
+    },
+  )
+  // Pedir coleta sem credencial criaria um job destinado a falhar -- a tela
+  // mostraria "coleta enfileirada" seguida de erro minutos depois.
+  .refine((o) => !o.coletarAgora || o.applicationKey !== undefined, {
+    message:
+      "Para executar a primeira coleta e preciso informar as credenciais no mesmo envio.",
+    path: ["coletarAgora"],
+  });
+
+export type EntradaNovaContaOvh = z.output<typeof esquemaNovaContaOvh>;
+
+/** `?provider=` da listagem. Ausente significa TODAS, para nao quebrar quem ja consome. */
+export const esquemaProviderConsulta = z.enum(["aws", "ovh"]).optional();
