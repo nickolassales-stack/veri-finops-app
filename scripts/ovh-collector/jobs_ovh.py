@@ -35,6 +35,8 @@ caso do worker morrer no meio -- ver `reabrir_orfaos`.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import re
 from dataclasses import dataclass
 
@@ -140,6 +142,7 @@ WITH proximo AS (
       FROM cloud_sync_jobs
      WHERE status = 'queued'
        AND provider = 'ovh'
+       AND NOT (id = ANY(%s::bigint[]))
      ORDER BY requested_at
      LIMIT 1
      FOR UPDATE SKIP LOCKED
@@ -154,7 +157,7 @@ RETURNING j.id, j.account_id, j.action, j.attempts
 """
 
 
-def reivindicar(conexao) -> Job | None:
+def reivindicar(conexao, excluir: Iterable[int] = ()) -> Job | None:
     """
     Pega o job mais antigo em `queued` e o marca `running`, atomicamente.
 
@@ -162,6 +165,14 @@ def reivindicar(conexao) -> Job | None:
     externa: o segundo pula a linha que o primeiro travou em vez de esperar por
     ela. Sem `SKIP LOCKED`, dois workers serializariam e o segundo processaria o
     MESMO job depois do commit do primeiro.
+
+    `excluir` sao ids que ESTE worker ja adiou nesta execucao.
+
+    Sem ele o worker gira em falso: um job adiado volta para `queued`, e como a
+    ordem e por `requested_at` ele e imediatamente o mais antigo de novo. O laco
+    o reivindicava, adiava, reivindicava -- gastando as `--max` iteracoes no mesmo
+    job e, pior, impedindo que qualquer OUTRA conta fosse atendida, porque a
+    consulta nunca chegava nela.
     """
     if not fila_existe(conexao):
         raise FilaAusente(
@@ -170,7 +181,7 @@ def reivindicar(conexao) -> Job | None:
         )
 
     with conexao.cursor() as cur:
-        cur.execute(SQL_REIVINDICAR)
+        cur.execute(SQL_REIVINDICAR, (list(excluir),))
         linha = cur.fetchone()
 
     if linha is None:
@@ -223,6 +234,43 @@ def devolver_para_fila(conexao, job_id: int, motivo: str) -> None:
              WHERE id = %s
             """,
             (MAX_TENTATIVAS, MAX_TENTATIVAS, MAX_TENTATIVAS, sanitizar(motivo), job_id),
+        )
+
+
+def adiar_por_conta_ocupada(conexao, job_id: int, motivo: str) -> None:
+    """
+    Devolve o job para `queued` SEM gastar tentativa.
+
+    ---------------------------------------------------------------------------
+    ADIAR NAO E TENTAR
+
+    `reivindicar` incrementa `attempts` ao marcar `running` -- otimista, porque
+    normalmente o trabalho comeca em seguida. Quando a conta esta travada por
+    outro processo, nenhum trabalho aconteceu: nao houve chamada a OVH, nao houve
+    escrita, nao houve erro. Cobrar uma tentativa por isso faz o job morrer por
+    ESTAR OCUPADO.
+
+    O caso concreto: uma coleta pedida pelo portal enquanto a carga diaria das
+    09:00 corre a mesma conta. Com o incremento valendo, o job gastava as tres
+    tentativas em segundos e a tela mostrava "coleta falhou" para uma coleta que
+    so estava esperando a vez -- e que teria funcionado um minuto depois.
+
+    Por isso `attempts` volta ao valor anterior. Nao ha risco de laco infinito: o
+    worker exclui o job do resto desta execucao (ver `reivindicar`), e a coleta
+    concorrente termina.
+    """
+    with conexao.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE cloud_sync_jobs
+               SET status        = 'queued',
+                   started_at    = NULL,
+                   finished_at   = NULL,
+                   attempts      = GREATEST(attempts - 1, 0),
+                   error_message = %s
+             WHERE id = %s
+            """,
+            (sanitizar(motivo), job_id),
         )
 
 

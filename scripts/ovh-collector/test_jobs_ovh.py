@@ -17,6 +17,7 @@ import unittest
 import jobs_ovh
 from jobs_ovh import (
     MAX_TENTATIVAS,
+    adiar_por_conta_ocupada,
     FilaAusente,
     Job,
     TravaConta,
@@ -312,3 +313,94 @@ class TesteSemSegredo(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# =========================================== adiar por conta ocupada (nao e falha)
+class TesteAdiarPorContaOcupada(unittest.TestCase):
+    """
+    Adiar NAO e tentar.
+
+    `reivindicar` incrementa `attempts` ao marcar `running` -- otimista, porque
+    normalmente o trabalho comeca em seguida. Quando a conta esta travada por
+    outro processo, NENHUM trabalho aconteceu: nao houve chamada a OVH, nao houve
+    escrita, nao houve erro.
+
+    Cobrar tentativa nesse caso faz o job morrer por ESTAR OCUPADO. Foi o que se
+    observou em producao ao validar a instalacao do cron: com a conta travada, o
+    worker reivindicou o mesmo job tres vezes na mesma execucao, gastou as tres
+    tentativas em um segundo e marcou `failed` -- para uma coleta que teria
+    funcionado no ciclo seguinte.
+    """
+
+    def _registro(self):
+        conexao = ConexaoRoteiro([("UPDATE cloud_sync_jobs", [])])
+        adiar_por_conta_ocupada(conexao, 7, "conta em coleta por outro processo")
+        return conexao
+
+    def test_volta_para_queued(self) -> None:
+        # `sql_executado` NORMALIZA o espaco em branco: assegurar o alinhamento
+        # do arquivo aqui testaria a formatacao, nao o comportamento.
+        sql = self._registro().sql_executado()
+        self.assertIn("SET status = 'queued'", sql)
+
+    def test_DEVOLVE_a_tentativa(self) -> None:
+        # O ponto central deste bloco.
+        sql = self._registro().sql_executado()
+        self.assertIn("GREATEST(attempts - 1, 0)", sql)
+
+    def test_nunca_marca_failed(self) -> None:
+        # Ao contrario de `devolver_para_fila`, aqui nao existe ramo que mate o
+        # job: conta ocupada nao vira falha por mais que se repita.
+        sql = self._registro().sql_executado()
+        self.assertNotIn("failed", sql)
+
+    def test_limpa_started_at(self) -> None:
+        # O job volta a ser um job nao iniciado. Deixar `started_at` preenchido
+        # faria `reabrir_orfaos` conta-lo como orfao daqui a 30 minutos.
+        sql = self._registro().sql_executado()
+        self.assertIn("started_at = NULL", sql)
+
+    def test_sanitiza_o_motivo(self) -> None:
+        conexao = ConexaoRoteiro([("UPDATE cloud_sync_jobs", [])])
+        adiar_por_conta_ocupada(conexao, 7, "ocupada AKIAIOSFODNN7EXAMPLEKEY")
+        _, params = conexao.registro[0]
+        self.assertNotIn("AKIAIOSFODNN7EXAMPLEKEY", str(params))
+
+
+# ================================== reivindicar nao gira em falso no mesmo job
+class TesteReivindicarExclui(unittest.TestCase):
+    """
+    Um job adiado volta para `queued` e, por `ORDER BY requested_at`, volta a ser
+    o mais antigo. Sem exclusao, o laco do worker o reivindica de novo na mesma
+    execucao -- gastando as iteracoes de `--max` e, pior, nunca chegando as
+    OUTRAS contas da fila, que ficam atras dele para sempre.
+    """
+
+    def test_a_consulta_aceita_lista_de_exclusao(self) -> None:
+        conexao = ConexaoRoteiro([FILA_EXISTE, ("UPDATE cloud_sync_jobs", [])])
+        reivindicar(conexao, excluir=[7, 9])
+        sql = conexao.sql_executado()
+        self.assertIn("NOT (id = ANY(", sql)
+
+    def test_os_ids_chegam_como_parametro(self) -> None:
+        conexao = ConexaoRoteiro([FILA_EXISTE, ("UPDATE cloud_sync_jobs", [])])
+        reivindicar(conexao, excluir=[7, 9])
+        # O parametro da SEGUNDA consulta (a primeira e o to_regclass).
+        _, params = conexao.registro[1]
+        self.assertEqual(params, ([7, 9],))
+
+    def test_sem_exclusao_o_comportamento_nao_muda(self) -> None:
+        # Lista vazia precisa casar tudo: `id = ANY(ARRAY[]::bigint[])` e falso,
+        # entao `NOT (...)` e verdadeiro para toda linha.
+        conexao = ConexaoRoteiro([FILA_EXISTE, ("UPDATE cloud_sync_jobs", [(7, "c", "manual_sync", 1)])])
+        job = reivindicar(conexao)
+        self.assertIsNotNone(job)
+        _, params = conexao.registro[1]
+        self.assertEqual(params, ([],))
+
+    def test_o_cast_para_bigint_esta_explicito(self) -> None:
+        # Sem `::bigint[]`, uma lista vazia chega ao Postgres com tipo
+        # indeterminado e a consulta falha -- so no caminho que roda em producao.
+        conexao = ConexaoRoteiro([FILA_EXISTE, ("UPDATE cloud_sync_jobs", [])])
+        reivindicar(conexao)
+        self.assertIn("::bigint[]", conexao.sql_executado())

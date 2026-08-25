@@ -139,9 +139,42 @@ cd /opt/finops/ovh-collector
 * * * * *  cd /opt/finops/ovh-collector && ./run-cloud-sync-jobs.sh  # worker da fila
 ```
 
-> **A terceira linha não está instalada.** Sem ela os botões enfileiram e nada
-> processa. Procedimento com backup em
-> [`cron-ovh.exemplo`](../scripts/ovh-collector/cron-ovh.exemplo).
+As três estão instaladas. O worker entrou em **25/08/2026**; até então os botões
+enfileiravam e nada processava.
+
+**A cada minuto, e não a cada hora.** O valor do botão é a coleta começar
+enquanto a pessoa ainda está na tela; uma janela de uma hora faria o recurso
+parecer quebrado, e alguém rodaria a coleta à mão — ou seja, o botão não
+existiria. Essa frequência só é segura por causa do `flock` dentro do script: se
+um worker ainda roda, o próximo sai com 75 sem fazer nada, em vez de empilhar
+processo numa instância de 3,8 GiB que também roda Metabase.
+
+Procedimento com backup em
+[`cron-ovh.exemplo`](../scripts/ovh-collector/cron-ovh.exemplo). **Não use o
+`grep -v "^#" | crontab -` daquele arquivo agora**: ele reinstalaria a linha das
+09:00 e a duplicaria. Acrescente só a linha que falta.
+
+**Rollback do agendamento:**
+
+```bash
+crontab /opt/finops/backups/crontab.before-worker.2026-08-25-1649.bak
+crontab -l | grep -c cloud-sync-jobs   # espera 0
+```
+
+### O worker falhava em silêncio no log do cron — corrigido em 25/08/2026
+
+Duas armadilhas encontradas ao preparar a instalação, as duas com **código de
+saída certo e nenhuma pista no log**:
+
+1. `codigo=$?` solto sob `set -e` nunca rodava quando o Python falhava — o bash
+   encerrava no comando anterior. Como todo o detalhe vai para `jobs.log`, a
+   linha de stderr era a única coisa que chegava ao `cron.log`: num dia de
+   falhas, o log do cron ficaria **vazio**. Corrigido com `|| codigo=$?`.
+2. `flock` ausente faz `flock -n 9` devolver 127, que o `if !` tomava por "outro
+   worker rodando" — saída 75 a cada minuto, para sempre, sem processar nada.
+   Corrigido com um `command -v flock` que recusa com 3.
+
+`test_run_cloud_sync_jobs.py` roda o script de verdade e guarda os dois casos.
 
 O OVH roda **uma hora depois** do AWS de propósito: os dois usam o mesmo
 PostgreSQL numa instância de 3,8 GiB que também roda Metabase.

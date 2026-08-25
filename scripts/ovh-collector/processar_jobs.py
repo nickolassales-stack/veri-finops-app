@@ -47,9 +47,16 @@ from ovh_to_postgres import (
 )
 
 
-def processar_um(conexao, base, job: jobs_ovh.Job, source: str) -> bool:
+def processar_um(conexao, base, job: jobs_ovh.Job, source: str) -> str:
     """
-    Executa um job ja reivindicado. Devolve `True` em sucesso.
+    Executa um job ja reivindicado.
+
+    Devolve `"ok"`, `"falha"` ou `"adiado"` -- TRES resultados, e nao um booleano.
+
+    `adiado` nao e sucesso nem falha: a conta esta sendo coletada por outro
+    processo e este job volta para a fila intacto. Enquanto isto era `True`
+    (sucesso), o resumo do worker dizia "3 jobs processados, 0 falhas" para uma
+    execucao que nao coletou nada -- e o operador nao tinha como saber.
 
     NUNCA levanta: um job que estoura tem de ser fechado como `failed`, senao fica
     `running` para sempre e o indice unico parcial impede qualquer novo job
@@ -64,10 +71,13 @@ def processar_um(conexao, base, job: jobs_ovh.Job, source: str) -> bool:
     with trava:
         if not trava.obtida:
             log(f"job {job.id}: conta em coleta por outro processo, devolvido a fila")
-            jobs_ovh.devolver_para_fila(
+            # `adiar_por_conta_ocupada` e nao `devolver_para_fila`: nenhum trabalho
+            # aconteceu, entao a tentativa nao pode ser cobrada. Ver o docstring
+            # daquela funcao -- cobrar fazia o job morrer por ESTAR OCUPADO.
+            jobs_ovh.adiar_por_conta_ocupada(
                 conexao, job.id, "conta em coleta por outro processo"
             )
-            return True  # nao e falha: sera atendido no proximo ciclo
+            return "adiado"
 
         try:
             descoberta = descobrir(base, cid)
@@ -75,7 +85,7 @@ def processar_um(conexao, base, job: jobs_ovh.Job, source: str) -> bool:
             msg = str(exc)
             log(f"job {job.id}: FALHA -- {msg}")
             jobs_ovh.concluir(conexao, job.id, status="failed", erro=msg)
-            return False
+            return "falha"
 
         if not descoberta.contas:
             msg = (
@@ -84,7 +94,7 @@ def processar_um(conexao, base, job: jobs_ovh.Job, source: str) -> bool:
             )
             log(f"job {job.id}: FALHA -- {msg}")
             jobs_ovh.concluir(conexao, job.id, status="failed", erro=msg)
-            return False
+            return "falha"
 
         conta = descoberta.contas[0]
         log(f"job {job.id}: credencial via {conta.origem}")
@@ -99,7 +109,7 @@ def processar_um(conexao, base, job: jobs_ovh.Job, source: str) -> bool:
             msg = sanitizar_erro(exc)
             log(f"job {job.id}: FALHA inesperada -- {msg}")
             jobs_ovh.concluir(conexao, job.id, status="failed", erro=msg)
-            return False
+            return "falha"
 
         if ok:
             log(
@@ -109,10 +119,10 @@ def processar_um(conexao, base, job: jobs_ovh.Job, source: str) -> bool:
                 f"custos={contagens.get('custos', 0)}"
             )
             jobs_ovh.concluir(conexao, job.id, status="success", sync_run_id=run_id)
-            return True
+            return "ok"
 
         jobs_ovh.concluir(conexao, job.id, status="failed", sync_run_id=run_id, erro=erro)
-        return False
+        return "falha"
 
 
 def main() -> int:
@@ -165,9 +175,14 @@ def main() -> int:
 
         falhas = 0
         feitos = 0
+        # Jobs adiados NESTA execucao. Sem excluí-los, o laco reivindica o mesmo
+        # job repetidamente -- ele volta para `queued` e e de novo o mais antigo --
+        # gastando as iteracoes e impedindo que outras contas sejam atendidas.
+        adiados: list[int] = []
+
         for _ in range(max(1, args.max)):
             try:
-                job = jobs_ovh.reivindicar(conexao)
+                job = jobs_ovh.reivindicar(conexao, excluir=adiados)
             except jobs_ovh.FilaAusente as exc:
                 # Sem a migracao 008 o worker sai limpo. Cron a cada minuto
                 # estourando erro encheria o log e esconderia problema de verdade.
@@ -177,15 +192,30 @@ def main() -> int:
             if job is None:
                 break
 
+            resultado = processar_um(conexao, base, job, args.source)
+            if resultado == "adiado":
+                adiados.append(job.id)
+                continue
+
             feitos += 1
-            if not processar_um(conexao, base, job, args.source):
+            if resultado == "falha":
                 falhas += 1
 
-        if feitos == 0:
+        if feitos == 0 and not adiados:
             log("nada na fila")
             return 0
 
-        log(f"--- resumo --- jobs processados: {feitos}  falhas: {falhas}")
+        if adiados:
+            log(
+                f"--- resumo --- jobs processados: {feitos}  falhas: {falhas}  "
+                f"adiados (conta ocupada): {len(adiados)}"
+            )
+        else:
+            log(f"--- resumo --- jobs processados: {feitos}  falhas: {falhas}")
+
+        # Adiado NAO e falha: o job continua na fila e sera atendido. Devolver 6
+        # aqui faria o cron registrar erro numa execucao que se comportou
+        # exatamente como projetado.
         return 6 if falhas else 0
     finally:
         try:

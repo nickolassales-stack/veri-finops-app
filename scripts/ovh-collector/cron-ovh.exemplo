@@ -1,4 +1,7 @@
-# Agendamento do collector OVHcloud -- NAO INSTALADO.
+# Agendamento do collector OVHcloud.
+#
+# ESTADO EM 25/08/2026: as DUAS linhas deste arquivo estao instaladas na EC2 de
+# producao -- a diaria das 09:00 desde 20/08, e o worker da fila desde 25/08.
 #
 # 09:00 UTC = 06:00 em Sao Paulo. Uma hora depois do ETL AWS (08:00 UTC), de
 # proposito: os dois usam o mesmo PostgreSQL numa instancia de 3,8 GiB que ja
@@ -9,6 +12,13 @@
 #   crontab -l > /opt/finops/backups/crontab-$(date +%F-%H%M).bak
 #   ( crontab -l; cat /opt/finops/ovh-collector/cron-ovh.exemplo | grep -v '^#' ) | crontab -
 #   crontab -l    # conferir
+#
+# ATENCAO -- o comando acima instala AS DUAS linhas. Com uma delas ja instalada,
+# ele a DUPLICA, e a coleta diaria passa a rodar duas vezes as 09:00. Para
+# acrescentar so a que falta, acrescente aquela linha e nao o arquivo inteiro:
+#
+#   ( crontab -l; echo '* * * * * cd /opt/finops/ovh-collector && ./run-cloud-sync-jobs.sh >> /opt/finops/ovh-collector/logs/jobs-cron.log 2>&1' ) | crontab -
+#   crontab -l | grep -c cloud-sync-jobs    # espera 1, nunca 2
 #
 # ROLLBACK:
 #
@@ -56,6 +66,13 @@
 
 # ---------------------------------------------------------------------------
 # WORKER DA FILA (cloud_sync_jobs) -- migracao 008
+#
+# INSTALADO EM 25/08/2026, depois de: 94 testes do collector passando no venv de
+# producao, worker rodando limpo com a fila vazia, e flock confirmado recusando o
+# segundo worker com 75. Validado em seguida com job real (id 4, ovh-main-ca):
+# queued -> running em 32 s -> success.
+#
+# Rollback: crontab /opt/finops/backups/crontab.before-worker.2026-08-25-1649.bak
 #
 # O portal nao executa coleta: o botao "Salvar e executar primeira coleta"
 # INSERE uma linha em `cloud_sync_jobs`. Este worker, no host, atende a fila.
