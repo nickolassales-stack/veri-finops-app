@@ -51,6 +51,16 @@ TRAVA="${JOBS_LOCK_PATH:-/tmp/veri-finops-cloud-sync-jobs.lock}"
 # PG_USER e PG_PASSWORD. Sem banco nao ha fila para ler.
 [ -f "$DIR/.env" ] || { echo "$DIR/.env nao existe -- ver README, secao 3" >&2; exit 2; }
 
+# `flock` explicitamente, ANTES de usa-lo. Sem esta checagem, um host sem
+# util-linux faria `flock -n 9` retornar 127 (comando nao encontrado), o `if !`
+# abaixo tomaria isso por "outro worker rodando" e o script sairia 75 -- a cada
+# minuto, para sempre, sem processar nada e sem nenhuma linha de erro. Falha
+# permanente disfarcada do caso normal e o pior resultado possivel aqui.
+command -v flock >/dev/null 2>&1 || {
+  echo "flock nao encontrado (pacote util-linux) -- sem ele nao ha como impedir dois workers" >&2
+  exit 3
+}
+
 mkdir -p "$(dirname "$LOG")"
 
 # ---------------------------------------------------------------------------
@@ -91,8 +101,25 @@ fi
 } >> "$LOG"
 
 cd "$DIR"
-"$PYTHON" "$DIR/processar_jobs.py" "$@" >> "$LOG" 2>&1
-codigo=$?
+
+# ---------------------------------------------------------------------------
+# `|| codigo=$?` E OBRIGATORIO AQUI -- nao e estilo.
+#
+# Com `set -e`, um comando simples que retorna diferente de zero encerra o script
+# NA HORA. Escrito como `cmd` seguido de `codigo=$?`, a atribuicao nunca roda
+# quando o Python falha, e a linha de diagnostico abaixo nunca e impressa.
+#
+# O codigo de saida continuava certo (o bash sai com o status do comando que
+# falhou), e por isso o defeito era invisivel: o cron recebia 6 e o log do cron
+# ficava VAZIO. Como todo o detalhe do worker vai para `$LOG`, essa linha no
+# stderr era a UNICA pista no `cron.log` de que jobs falharam -- e ela nunca
+# apareceu. Um worker que falha em silencio e pior do que um worker parado.
+#
+# `|| codigo=$?` transforma a chamada em comando composto, que `set -e` nao
+# aborta, e a atribuicao passa a acontecer.
+# ---------------------------------------------------------------------------
+codigo=0
+"$PYTHON" "$DIR/processar_jobs.py" "$@" >> "$LOG" 2>&1 || codigo=$?
 
 # Codigo 0 sem nada na fila e o caso normal e nao merece linha no log do cron.
 [ "$codigo" -ne 0 ] && echo "worker terminou com codigo $codigo (ver $LOG)" >&2
