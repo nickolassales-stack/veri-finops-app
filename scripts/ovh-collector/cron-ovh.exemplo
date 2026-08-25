@@ -67,10 +67,16 @@
 # ---------------------------------------------------------------------------
 # WORKER DA FILA (cloud_sync_jobs) -- migracao 008
 #
-# INSTALADO EM 25/08/2026, depois de: 94 testes do collector passando no venv de
+# INSTALADO EM 25/08/2026, depois de: testes do collector passando no venv de
 # producao, worker rodando limpo com a fila vazia, e flock confirmado recusando o
 # segundo worker com 75. Validado em seguida com job real (id 4, ovh-main-ca):
-# queued -> running em 32 s -> success.
+# queued 16:50:30 -> running 16:51:01 -> success 16:52:05, ovh_sync_runs.id=15
+# com 266 linhas de custo e 17 faturas -- os mesmos numeros da coleta diaria.
+#
+# A validacao da exclusao mutua achou DOIS defeitos, corrigidos antes de dar o
+# worker por instalado: adiar por conta ocupada gastava tentativa (job morria por
+# estar ocupado) e o laco reivindicava o mesmo job repetidamente. Ver o commit
+# "adiar por conta ocupada nao pode gastar tentativa".
 #
 # Rollback: crontab /opt/finops/backups/crontab.before-worker.2026-08-25-1649.bak
 #
