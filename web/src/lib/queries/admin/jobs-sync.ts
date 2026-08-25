@@ -231,6 +231,39 @@ export async function enfileirarColeta(
 }
 
 /**
+ * Ha job PARADO na fila ha mais de `minutos`?
+ *
+ * E o unico sinal de "o worker nao esta rodando" que o portal pode ter. O worker
+ * (`run-cloud-sync-jobs.sh`) roda no host, fora do container -- o portal nao le
+ * o crontab da EC2 e nao deve poder: ler o agendador do host a partir de um
+ * processo que atende HTTP publico e exatamente o acesso que a fila existe para
+ * evitar.
+ *
+ * Mas o sintoma e observavel de dentro do banco: job em `queued` que ENVELHECE e
+ * job que ninguem pegou. Mesma regra de `diagnostico/fila-coleta.ts`.
+ *
+ * So `queued`: `running` velho e outro problema, e ja tem dono -- `reabrir_orfaos`
+ * devolve a fila o que passou de 30 minutos.
+ *
+ * O job recem-criado NAO conta, e nao pode contar: ele tem zero minuto de idade.
+ * O que responde "o worker esta vivo?" no instante do cadastro sao os jobs que
+ * JA estavam na fila antes.
+ */
+export async function existeJobParado(minutos: number): Promise<boolean> {
+  const linha = await queryOne<{ existe: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM cloud_sync_jobs
+        WHERE provider = $1
+          AND status = 'queued'
+          AND requested_at <= now() - make_interval(mins => $2::int)
+     ) AS existe`,
+    [PROVIDER, minutos],
+  );
+  return linha.existe;
+}
+
+/**
  * Quantas coletas FALHARAM na janela recente.
  *
  * Alimenta o cartao "Coletas com falha" de Contas Cloud. Janela e nao total

@@ -126,6 +126,20 @@ GET /cloud/project
 GET /cloud/project/*
 ```
 
+**Esta lista está NA TELA**, no bloco *Permissões necessárias na OVH* do
+formulário de cadastro, com botão **Copiar permissões**. Quem cadastra está na
+tela, não no repositório — e a OVH mostra o Application Secret **uma única vez**:
+um token criado sem os direitos certos só falha depois, na primeira coleta, com
+um 403 que se parece com chave errada, e o conserto é gerar tudo de novo.
+
+A lista mora em `lib/ovh/permissoes.ts`, e `permissoes.test.ts` afirma que ela
+cobre **todos** os caminhos que o collector chama de verdade — sem isso, ela
+envelheceria em silêncio no dia em que o collector passasse a chamar outro.
+
+O curinga `*` da OVH **atravessa a barra**: `GET /me/bill/*` cobre
+`/me/bill/{id}/details/{linha}`. Não é preciso listar cada nível — e `GET /*`,
+que funcionaria, daria leitura de tudo na conta do cliente.
+
 `GET /me` é o que o botão **Testar conexão** usa. Sem ele o teste retorna 403
 mesmo com a credencial correta — e a mensagem na tela diz exatamente isso, em vez
 de acusar a credencial.

@@ -149,8 +149,10 @@ describe("descrição do recorte de contas", () => {
     { id: "ovh-b-eu", nome: "OVH Europa" },
   ];
 
-  it("nenhuma selecionada diz 'todas as contas'", () => {
-    expect(descreverContasOvh([], disponiveis)).toBe("todas as contas");
+  it("nenhuma selecionada diz 'todas as contas OVH'", () => {
+    // Com o provedor no nome: o resumo aparece numa tela que tem duas visoes,
+    // e "todas as contas" ali nao diz de qual provedor esta falando.
+    expect(descreverContasOvh([], disponiveis)).toBe("todas as contas OVH");
   });
 
   it("uma selecionada diz o NOME, e não a contagem", () => {
@@ -308,10 +310,21 @@ describe("as queries recortam por provider_account_id", () => {
   });
 
   it("o resolvedor COPIA as contas para o filtro de custo", () => {
-    // A regressão desta entrega. Sem esta linha, `?conta=x` mudava a moeda
-    // escolhida e mais nada.
+    // A regressão de uma entrega anterior: sem esta linha, `?conta=x` mudava a
+    // moeda escolhida e mais nada. A fonte agora é o recorte RESOLVIDO -- a
+    // mesma lista que decidiu a moeda --, e não `entrada.conta` cru.
     const filtro = servico.slice(servico.indexOf("const filtro: FiltroOvh | null"));
-    expect(filtro.slice(0, 400)).toContain("contas: entrada.conta");
+    expect(filtro.slice(0, 600)).toContain("contas: ctx.recorte.ids");
+  });
+
+  it("o recorte é resolvido ANTES de descobrir as moedas", () => {
+    // Se a resolução viesse depois, a moeda seria escolhida sobre um conjunto
+    // maior do que o que os cards somam: bastaria uma conta desativada com
+    // fatura em EUR para a tela escolher EUR e todos os números virem zerados.
+    const resolucao = servico.indexOf("resolverRecorteContasOvh(");
+    const moedas = servico.indexOf("getDisponibilidadeOvh(semMoeda)");
+    expect(resolucao).toBeGreaterThan(-1);
+    expect(moedas).toBeGreaterThan(resolucao);
   });
 
   it("as faturas também recortam por conta", () => {

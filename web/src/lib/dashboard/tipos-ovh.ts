@@ -73,7 +73,7 @@ export type MetaOvh = {
   /** `monthly`: quantos meses da janela tem linha. */
   mesesComDado?: number;
   /** Opcoes do seletor de contas -- do CADASTRO do portal, nao do collector. */
-  contasDisponiveis?: { id: string; nome: string }[];
+  contasDisponiveis?: ContaOvhDisponivel[];
   /** `projects`: opcoes do seletor de projeto. */
   projetosDisponiveis?: ProjetoDisponivel[];
   custoSemProjeto?: number;
@@ -136,6 +136,18 @@ export type ProjetoOvhCliente = {
 };
 
 export type ProjetoDisponivel = { servicoDoProjeto: string; nome: string };
+
+/**
+ * Uma conta OVH ativa, como o seletor a recebe.
+ *
+ * Espelha `ContaOvhDoCadastro` do servidor. `unidade` alimenta a segunda linha
+ * do seletor, junto do id -- "ovh-main-ca · ti".
+ */
+export type ContaOvhDisponivel = {
+  id: string;
+  nome: string;
+  unidade?: string | null;
+};
 
 export type FaturaOvhCliente = {
   billId: string;

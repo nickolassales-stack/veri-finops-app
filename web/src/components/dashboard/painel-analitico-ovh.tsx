@@ -19,7 +19,7 @@ import {
   validarIntervaloOvh,
   type FiltrosOvh,
 } from "@/lib/dashboard/filtros-ovh";
-import type { MetaOvh } from "@/lib/dashboard/tipos-ovh";
+import type { ContaOvhDisponivel, MetaOvh } from "@/lib/dashboard/tipos-ovh";
 import { useRecursoOvh } from "@/lib/dashboard/use-recurso-ovh";
 import { formatDataDia, formatInteiro, formatMoeda } from "@/lib/format";
 
@@ -140,7 +140,7 @@ export function PainelAnaliticoOvh({ aba }: { aba: AbaOvh }) {
   const meta = r.meta as (MetaOvh & Record<string, unknown>) | null;
   const estado = (meta?.estado ?? "ok") as EstadoDadoOvh;
 
-  const contas = (meta?.contasDisponiveis ?? []) as { id: string; nome: string }[];
+  const contas = (meta?.contasDisponiveis ?? []) as ContaOvhDisponivel[];
   const projetos = (meta?.projetosDisponiveis ?? []) as {
     servicoDoProjeto: string;
     nome: string;

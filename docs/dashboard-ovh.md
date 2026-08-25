@@ -263,11 +263,39 @@ Conferir:
 SELECT count(*) FROM ovh_invoice_headers WHERE billing_month IS NULL;
 ```
 
-### Sem filtro de conta
+### Filtro de contas: o mesmo seletor da AWS
 
-A especificação não pediu, e o cadastro tem **uma** conta OVH (`ovh-main-ca`).
-Quando houver a segunda, o filtro entra em `FiltroOvh` como
-`provider_account_id` — a coluna já está em todas as tabelas `ovh_*`.
+As duas visões usam **`CloudAccountMultiSelect`** — painel suspenso com caixas de
+marcação, alias e id. A OVH usava pílulas em linha, e a diferença não era
+intencional: era o resíduo de as telas terem sido escritas em semanas diferentes.
+
+Pílulas têm um limite duro: ocupam largura **proporcional ao número de contas**.
+Com duas cabe; com oito, a barra quebra em três linhas e empurra *Projeto* para
+fora da tela. O painel ocupa largura constante e rola por dentro — é a forma que
+aguenta o cadastro crescer, que é o que a tela de Contas Cloud passou a permitir.
+
+O parâmetro da URL é **`?conta=`**, no singular, com lista separada por vírgula.
+`?contas=` **já é o filtro da visão AWS**, e as duas visões moram em `/dashboard`;
+um id AWS de 12 dígitos casa com o formato do id OVH, então só a separação de
+nome impede o vazamento. Ver `filtros-ovh.test.ts`.
+
+### "Todas as contas" é resolvido para as contas ativas
+
+`resolverRecorteContasOvh` troca a ausência de seleção pela lista de
+`cloud_accounts WHERE provider = 'ovh' AND active`. A resolução acontece **antes**
+de `getDisponibilidadeOvh`, e a ordem não é acidental: aquela consulta descobre
+quais moedas existem no recorte. Resolvida depois, a moeda seria escolhida sobre
+um conjunto maior do que o que os cards somam — bastaria uma conta desativada com
+fatura em EUR para a tela escolher EUR e todos os números virem zerados.
+
+A consequência tem nome: **custo de conta que não está ativa no cadastro deixa de
+entrar nos números**. Ela é dita na tela, e não silenciada:
+
+| Situação | Aviso |
+|---|---|
+| Nenhuma conta OVH ativa cadastrada | `ovh-cadastro-vazio` — o filtro é **omitido**; `= ANY('{}')` zeraria o painel inteiro, e zero passa por custo real |
+| Há custo de conta fora do cadastro ativo | `ovh-custo-fora-do-cadastro`, com a contagem de linhas |
+| Id pedido que o cadastro não conhece | `ovh-conta-desconhecida` — o id **continua** no filtro, porque pode ter custo legítimo |
 
 ### Nenhuma migração foi criada
 

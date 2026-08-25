@@ -24,12 +24,16 @@ import { ehEndpointOvh, type EndpointOvh } from "@/lib/ovh/endpoints";
 import { sanitizar, validarCredencialOvh } from "@/lib/ovh/api";
 import {
   enfileirarColeta,
+  existeJobParado,
   filaDisponivel,
   jobAtivoDaConta,
   ultimoJobDaConta,
   type AcaoJob,
   type JobSync,
 } from "@/lib/queries/admin/jobs-sync";
+// A MESMA constante do Diagnostico: se as duas telas usassem limiares
+// diferentes, uma diria "worker parado" enquanto a outra diz que esta tudo bem.
+import { MINUTOS_SEM_WORKER } from "@/lib/diagnostico/fila-coleta";
 import {
   apagarCredencial,
   contasComMesmaChave,
@@ -771,6 +775,16 @@ export type ResultadoCriacaoConta = {
   coleta: { jobId: string; criado: boolean } | null;
   /** Por que a coleta pedida nao aconteceu. `null` quando aconteceu ou nao foi pedida. */
   coletaIndisponivel: string | null;
+  /**
+   * A coleta ENTROU na fila, mas ha job parado: o worker nao esta processando.
+   *
+   * E diferente de `coletaIndisponivel`, e a diferenca importa. Ali a coleta NAO
+   * foi enfileirada -- nao ha nada esperando. Aqui ela foi, e vai ficar esperando
+   * para sempre se ninguem instalar o worker. Sem este aviso, a tela responde
+   * "coleta enfileirada" com sucesso e nada acontece: nem naquele minuto, nem
+   * nunca. Quem clicou conclui que a coleta e lenta e espera.
+   */
+  workerParado: boolean;
 };
 
 /**
@@ -842,15 +856,24 @@ export async function criarContaOvh(
 
   let coleta: ResultadoCriacaoConta["coleta"] = null;
   let coletaIndisponivel: string | null = null;
+  let workerParado = false;
 
   if (entrada.coletarAgora) {
     try {
+      // A checagem vem ANTES de enfileirar: depois, o proprio job recem-criado
+      // estaria na fila com zero minuto de idade, e a pergunta "ha job parado?"
+      // passaria a incluir aquele que acabamos de criar. Antes, ela olha so o
+      // que ja estava la -- que e o unico conjunto capaz de responder se o
+      // worker vem consumindo a fila.
+      const filaParada = await existeJobParado(MINUTOS_SEM_WORKER);
+
       const { job, criado } = await triggerOvhFirstSync(
         entrada.accountId,
         usuarioId,
         "first_sync",
       );
       coleta = { jobId: job.id, criado };
+      workerParado = filaParada;
     } catch (e) {
       coletaIndisponivel =
         e instanceof ErroDeApi
@@ -870,7 +893,14 @@ export async function criarContaOvh(
     );
   }
 
-  return { conta, credencial, avisoContasDuplicadas, coleta, coletaIndisponivel };
+  return {
+    conta,
+    credencial,
+    avisoContasDuplicadas,
+    coleta,
+    coletaIndisponivel,
+    workerParado,
+  };
 }
 
 

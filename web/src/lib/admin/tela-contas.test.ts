@@ -183,6 +183,102 @@ describe("Adicionar conta OVH é formulário", () => {
   });
 });
 
+describe("a tela de adicionar conta OVH ensina as permissões", () => {
+  const bloco = codigo("components", "admin", "contas", "permissoes-ovh.tsx");
+  const modal = codigo("components", "admin", "contas", "modal-adicionar-ovh.tsx");
+
+  it("o bloco está montado no formulário", () => {
+    // Só o módulo existir não basta: a lista tem de estar NA TELA de quem vai
+    // criar o token, porque o Application Secret aparece uma única vez e um
+    // token sem direito falha depois, na primeira coleta.
+    expect(modal).toContain("<BlocoPermissoesOvh");
+  });
+
+  it("vem ANTES dos campos de chave", () => {
+    // A ordem de quem cadastra é: ler os direitos, abrir o console da OVH,
+    // criar o token, voltar e colar. Embaixo do formulário, o bloco seria lido
+    // por quem já gerou o token errado.
+    expect(modal.indexOf("<BlocoPermissoesOvh")).toBeLessThan(
+      modal.indexOf('rotulo="Application Key"'),
+    );
+  });
+
+  it("tem o título pedido", () => {
+    expect(bloco).toContain("Permissões necessárias na OVH");
+  });
+
+  it("o botão de copiar existe e copia a lista", () => {
+    expect(bloco).toContain("Copiar permissões");
+    expect(bloco).toContain("clipboard.writeText(textoPermissoesOvh())");
+  });
+
+  it("a cópia negada pelo navegador tem saída", () => {
+    // `navigator.clipboard` exige contexto seguro e pode ser negado. Um botão
+    // que não faz nada e não explica é pior do que nenhum botão.
+    expect(bloco).toMatch(/catch\s*\{[\s\S]{0,80}setCopia\("falhou"\)/);
+    expect(bloco).toContain("copie à mão");
+  });
+
+  it("as permissões saem do módulo, e não estão digitadas no JSX", () => {
+    // Digitadas aqui, elas envelheceriam em silêncio no dia em que o collector
+    // passasse a chamar um caminho novo.
+    expect(bloco).toContain("PERMISSOES_OVH");
+    expect(bloco).not.toMatch(/"GET \/me"/);
+  });
+
+  it("desaconselha o curinga da raiz", () => {
+    expect(bloco).toContain("GET /*");
+    expect(bloco).toContain("libera leitura ampla");
+  });
+
+  it("recomenda o endpoint e acompanha o seletor", () => {
+    // A recomendação muda com o endpoint ESCOLHIDO: as três regiões são contas
+    // separadas na OVH, e o token da errada devolve 404 em /me.
+    expect(bloco).toContain("Endpoint recomendado para esta conta");
+    expect(bloco).toMatch(/endpoint\s*\}:\s*\{\s*endpoint: EndpointOvh\s*\}/);
+    expect(modal).toMatch(/endpoint=\{f\.endpoint as EndpointOvh\}/);
+  });
+
+  it("o endpoint continua sendo um select", () => {
+    expect(modal).toMatch(/<Selecao[\s\S]{0,400}rotulo="Endpoint"/);
+    expect(modal).toContain("ENDPOINTS_OVH.map");
+  });
+
+  it("nenhum segredo aparece no bloco de permissões", () => {
+    for (const proibido of ["applicationSecret", "consumerKey", "applicationKey"]) {
+      expect(bloco, proibido).not.toContain(proibido);
+    }
+  });
+});
+
+describe("coleta enfileirada sem worker é dita, e não silenciada", () => {
+  const modal = codigo("components", "admin", "contas", "modal-adicionar-ovh.tsx");
+
+  it("a tela avisa com a frase pedida", () => {
+    // O pior caso para fechar em silêncio: tudo respondeu com sucesso e a
+    // coleta simplesmente nunca vai acontecer.
+    expect(modal).toContain("Coleta enfileirada, mas o worker não está ativo.");
+    expect(modal).toContain("Instale o worker para processar automaticamente.");
+  });
+
+  it("é um caso separado de 'não foi enfileirada'", () => {
+    // São coisas diferentes: ali nada está esperando; aqui um job está, e vai
+    // ficar para sempre se ninguém instalar o worker.
+    expect(modal).toContain("r.coletaIndisponivel");
+    expect(modal).toContain("r.workerParado");
+  });
+
+  it("o serviço olha a fila ANTES de enfileirar", () => {
+    // Depois, o próprio job recém-criado estaria na fila com zero minuto de
+    // idade e a pergunta "há job parado?" passaria a incluí-lo.
+    const servico = codigo("lib", "services", "credenciais-ovh.ts");
+    const trecho = servico.slice(servico.indexOf("if (entrada.coletarAgora)"));
+    expect(trecho.indexOf("existeJobParado")).toBeLessThan(
+      trecho.indexOf("triggerOvhFirstSync"),
+    );
+  });
+});
+
 describe("o cartão de conta separa os dois provedores", () => {
   const cartao = codigo("components", "admin", "contas", "cartao-conta.tsx");
 

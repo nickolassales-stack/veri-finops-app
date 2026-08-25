@@ -20,9 +20,18 @@ import {
   type PeriodoMensalResolvido,
 } from "@/lib/filtros/periodo-mensal";
 import {
+  avisoCadastroVazio,
+  avisoContasDesconhecidas,
+  avisoCustoForaDoCadastro,
+  resolverRecorteContasOvh,
+  type RecorteContasOvh,
+} from "@/lib/dashboard/recorte-contas-ovh";
+import {
+  contarLinhasForaDoCadastroOvh,
   getContasOvhDoCadastro,
   getDisponibilidadeOvh,
   ovhInstaladoNoBanco,
+  type ContaOvhDoCadastro,
   type DisponibilidadeOvh,
   type FiltroOvh,
 } from "@/lib/queries/dashboard-ovh";
@@ -85,18 +94,38 @@ export async function resolverFiltroOvh(
     entrada.ateMes,
   );
 
+  // As duas leituras sao independentes: `cloud_accounts` existe desde sempre e
+  // nao depende da migracao 005. A lista de contas e carregada AINDA QUE a
+  // integracao nao esteja instalada -- e ela que alimenta o seletor, e um
+  // seletor vazio numa tela sem dado nao diria se falta conta ou falta coleta.
+  const [instalado, contas] = await Promise.all([
+    ovhInstaladoNoBanco(),
+    getContasOvhDoCadastro(),
+  ]);
+
+  // "TODAS" VIRA LISTA EXPLICITA AQUI, E NAO LA DENTRO DA QUERY.
+  //
+  // A resolucao precisa acontecer ANTES de `getDisponibilidadeOvh`, e nao em
+  // paralelo com a carga das contas: aquela consulta e quem descobre QUAIS
+  // MOEDAS existem no recorte. Resolvida depois, a moeda seria escolhida sobre
+  // um conjunto de linhas maior do que o que os cards somam -- bastaria uma
+  // conta desativada com fatura em EUR para a tela escolher EUR e todos os
+  // numeros virem zerados, sem nada que ligasse uma coisa a outra.
+  const recorte = resolverRecorteContasOvh(
+    entrada.conta,
+    contas.map((c) => c.id),
+  );
+
   const semMoeda = {
     deMes: periodo.deMes,
     ateMes: periodo.ateMes,
     source: entrada.source,
-    contas: entrada.conta,
+    contas: recorte.ids,
     projeto: entrada.projeto,
   };
 
-  const instalado = await ovhInstaladoNoBanco();
-
   // Sem tabela nao ha o que consultar, e `getDisponibilidadeOvh` falharia na
-  // analise sintatica -- por isso a verificacao vem antes, numa viagem propria.
+  // analise sintatica -- por isso a verificacao vem antes de consultar custo.
   if (!instalado) {
     return montar({
       entrada,
@@ -105,16 +134,27 @@ export async function resolverFiltroOvh(
       instalado: false,
       disponibilidade: { temAlgumDado: false, fontes: [], moedas: [] },
       escolha: { moeda: null, outras: [] },
+      contas,
+      recorte,
+      linhasForaDoCadastro: 0,
     });
   }
 
-  // A lista de contas entra no MESMO Promise.all: as duas leituras sao
-  // independentes, e a lista alimenta o seletor de TODAS as abas -- nao so a de
-  // projetos. Uma linha por conta, entao o custo e desprezivel perto de uma
-  // segunda ida ao banco.
-  const [disponibilidade, contas] = await Promise.all([
+  // A contagem do que ficou de fora so e feita quando "todas" virou lista: com
+  // selecao explicita, a exclusao e o que a pessoa pediu, e o aviso seria ruido.
+  const [disponibilidade, linhasForaDoCadastro] = await Promise.all([
     getDisponibilidadeOvh(semMoeda),
-    getContasOvhDoCadastro(),
+    recorte.resolvidoParaAtivas
+      ? contarLinhasForaDoCadastroOvh(
+          {
+            deMes: periodo.deMes,
+            ateMes: periodo.ateMes,
+            source: entrada.source,
+            projeto: entrada.projeto,
+          },
+          recorte.ids ?? [],
+        )
+      : Promise.resolve(0),
   ]);
   const escolha = escolherMoeda(disponibilidade.moedas, entrada.moeda);
 
@@ -126,6 +166,8 @@ export async function resolverFiltroOvh(
     disponibilidade,
     escolha,
     contas,
+    recorte,
+    linhasForaDoCadastro,
   });
 }
 
@@ -136,7 +178,9 @@ function montar(ctx: {
   instalado: boolean;
   disponibilidade: DisponibilidadeOvh;
   escolha: ReturnType<typeof escolherMoeda>;
-  contas?: { id: string; nome: string }[];
+  contas?: ContaOvhDoCadastro[];
+  recorte: RecorteContasOvh;
+  linhasForaDoCadastro: number;
 }): FiltroOvhResolvido {
   const { entrada, periodo, disponibilidade, escolha } = ctx;
 
@@ -162,12 +206,25 @@ function montar(ctx: {
           // que alimenta os cards, os graficos e as tabelas. Consequencia:
           // `?conta=x` mudava a moeda escolhida e mais nada; todos os numeros
           // continuavam sendo de TODAS as contas, sem nenhum sinal na tela.
-          contas: entrada.conta,
+          //
+          // Agora vem do recorte RESOLVIDO -- a mesma lista que decidiu a moeda.
+          contas: ctx.recorte.ids,
           projeto: entrada.projeto,
           moeda: escolha.moeda,
         };
 
   const avisos: { codigo: string; mensagem: string }[] = [];
+
+  // As tres consequencias de resolver "todas" em lista explicita, cada uma dita
+  // na tela. Um recorte que muda os numeros sem se explicar e o modo de falha
+  // que este painel existe para nao ter.
+  for (const aviso of [
+    avisoCadastroVazio(ctx.recorte),
+    avisoContasDesconhecidas(ctx.recorte),
+    avisoCustoForaDoCadastro(ctx.recorte, ctx.linhasForaDoCadastro),
+  ]) {
+    if (aviso) avisos.push(aviso);
+  }
 
   // Segunda moeda no recorte: a tela mostra UMA e precisa dizer que a outra
   // existe. Sem este aviso, o total exibido passaria por total do periodo.
@@ -217,8 +274,15 @@ function montar(ctx: {
       },
       filtros: {
         source: entrada.source,
+        // O QUE A PESSOA MARCOU, e nao o que a query recebeu. As caixas do
+        // seletor sao desenhadas a partir daqui: devolver a lista resolvida
+        // faria "todas" voltar com todas as caixas MARCADAS, e o proximo clique
+        // -- desmarcar uma -- viraria um recorte que ninguem pediu.
         contas: entrada.conta ?? [],
         todasAsContas: entrada.conta === undefined,
+        // O que de fato foi para `provider_account_id = ANY(...)`. `null` so no
+        // caso de cadastro vazio, em que nao houve filtro de conta.
+        contasConsultadas: ctx.recorte.ids ?? null,
         projeto: entrada.projeto ?? null,
         todosOsProjetos: entrada.projeto === undefined,
         /**

@@ -43,6 +43,17 @@ export type ResumoCollector = {
   alertas: string[];
   /** Quantas contas o recorte alcança. */
   total: number;
+  /**
+   * Fim da coleta mais recente ENTRE AS CONTAS DO RECORTE, ISO-8601.
+   *
+   * `null` quando nenhuma conta do recorte já terminou uma coleta.
+   *
+   * Não é a última execução do collector: aquela é global, e com duas contas ela
+   * pode ser de uma conta que não está no recorte. Quem filtrou por uma conta
+   * precisa do relógio DAQUELA conta -- ler o horário da outra e concluir que o
+   * dado é fresco é exatamente o erro que o filtro deveria tornar impossível.
+   */
+  ultimaColeta: string | null;
 };
 
 /** Horas a partir das quais a última coleta bem-sucedida é considerada velha. */
@@ -50,6 +61,22 @@ export const HORAS_DADO_VELHO = 36;
 
 function horasDesde(iso: string, agora: Date): number {
   return (agora.getTime() - new Date(iso).getTime()) / 3_600_000;
+}
+
+/**
+ * O `ultimoFim` mais recente do recorte.
+ *
+ * Comparação por `Date`, e não por ordem alfabética da string: as duas coincidem
+ * em ISO-8601 UTC, mas nada aqui garante que o servidor devolva sempre `Z` --
+ * um `-03:00` ordenaria errado como texto, e o erro seria de uma hora, invisível.
+ */
+function coletaMaisRecente(contas: ContaColetada[]): string | null {
+  let melhor: string | null = null;
+  for (const c of contas) {
+    if (c.ultimoFim === null) continue;
+    if (melhor === null || new Date(c.ultimoFim) > new Date(melhor)) melhor = c.ultimoFim;
+  }
+  return melhor;
 }
 
 function plural(n: number, um: string, muitos: string): string {
@@ -98,6 +125,7 @@ export function resumirCollector(
       descricaoContas,
       alertas: [],
       total: 0,
+      ultimaColeta: null,
     };
   }
 
@@ -136,33 +164,28 @@ export function resumirCollector(
     );
   }
 
+  const comum = {
+    descricaoContas,
+    alertas,
+    total: selecionadas.length,
+    ultimaColeta: coletaMaisRecente(selecionadas),
+  };
+
   // A ORDEM É A PRIORIDADE, e ela é pessimista de propósito: o card mostra o
   // pior estado do recorte. Falha antes de ausência de credencial porque falha
   // significa que algo QUEBROU; ausência é configuração pendente.
   if (falharam.length > 0) {
-    return { rotulo: "Coleta com falha", tom: "critico", descricaoContas, alertas, total: selecionadas.length };
+    return { rotulo: "Coleta com falha", tom: "critico", ...comum };
   }
   if (semCredencial.length > 0 || nuncaColetadas.length > 0) {
-    return { rotulo: "Coleta incompleta", tom: "atencao", descricaoContas, alertas, total: selecionadas.length };
+    return { rotulo: "Coleta incompleta", tom: "atencao", ...comum };
   }
   if (velhas.length > 0) {
-    return { rotulo: "Dado desatualizado", tom: "atencao", descricaoContas, alertas, total: selecionadas.length };
+    return { rotulo: "Dado desatualizado", tom: "atencao", ...comum };
   }
   if (emExecucao.length > 0) {
-    return {
-      rotulo: "Coleta em execução",
-      tom: "atencao",
-      descricaoContas,
-      alertas,
-      total: selecionadas.length,
-    };
+    return { rotulo: "Coleta em execução", tom: "atencao", ...comum };
   }
 
-  return {
-    rotulo: "Coleta em dia",
-    tom: "ok",
-    descricaoContas,
-    alertas,
-    total: selecionadas.length,
-  };
+  return { rotulo: "Coleta em dia", tom: "ok", ...comum };
 }

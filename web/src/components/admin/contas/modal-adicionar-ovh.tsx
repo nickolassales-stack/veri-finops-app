@@ -7,7 +7,9 @@ import { Campo, Selecao } from "@/components/ui/campo";
 import { ErroDoBloco } from "@/components/ui/estado";
 import { Modal } from "@/components/ui/modal";
 import { escrever, mensagemDoErro } from "@/lib/admin/cliente";
-import { ENDPOINTS_OVH } from "@/lib/ovh/endpoints";
+import { ENDPOINTS_OVH, ROTULO_ENDPOINT, type EndpointOvh } from "@/lib/ovh/endpoints";
+
+import { BlocoPermissoesOvh } from "./permissoes-ovh";
 
 /**
  * "Adicionar conta OVH" — aqui SIM é um formulário.
@@ -56,6 +58,7 @@ type Resposta = {
   conta: { accountId: string };
   coleta: { jobId: string; criado: boolean } | null;
   coletaIndisponivel: string | null;
+  workerParado: boolean;
   avisoContasDuplicadas: string[];
 };
 
@@ -154,6 +157,17 @@ export function ModalAdicionarOvh({
         aoCriar();
         return;
       }
+      // Enfileirou E há job parado na fila: o worker não está consumindo. É o
+      // pior caso de todos para fechar em silêncio, porque tudo respondeu com
+      // sucesso — a coleta simplesmente nunca vai acontecer.
+      if (r.workerParado) {
+        setAviso(
+          "Coleta enfileirada, mas o worker não está ativo. " +
+            "Instale o worker para processar automaticamente.",
+        );
+        aoCriar();
+        return;
+      }
       if (r.avisoContasDuplicadas.length > 0) {
         setAviso(
           `Conta criada. Atenção: a mesma Application Key já é usada por ${r.avisoContasDuplicadas.join(", ")}.`,
@@ -236,13 +250,22 @@ export function ModalAdicionarOvh({
             onChange={(e) => campo("endpoint")(e.target.value)}
             ajuda="A região da API OVH em que as chaves foram geradas."
           >
+            {/* O rótulo traz a região JUNTO do código: `ovh-ca` sozinho não diz
+                a quem cadastra que aquilo é Canadá, e escolher a região errada
+                devolve 404 em /me — sintoma que se confunde com chave inválida. */}
             {ENDPOINTS_OVH.map((e) => (
               <option key={e} value={e}>
-                {e}
+                {ROTULO_ENDPOINT[e]}
               </option>
             ))}
           </Selecao>
         </div>
+
+        {/* ANTES dos campos de chave, e não depois: a ordem de quem cadastra é
+            ler os direitos, abrir o console da OVH, criar o token e só então
+            voltar para colar. Embaixo do formulário, o bloco seria lido por
+            quem já gerou o token errado. */}
+        <BlocoPermissoesOvh endpoint={f.endpoint as EndpointOvh} />
 
         <fieldset className="space-y-4 rounded-xl border border-veri-offwhite p-4">
           <legend className="px-1 text-sm font-semibold text-veri-verde-escuro">

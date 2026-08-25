@@ -52,16 +52,12 @@ export type FiltroOvh = {
   /** Origem do custo. Obrigatoria -- ver regra 1 no cabecalho. */
   source: FonteOvh;
   /**
-   * `provider_account_id`. `undefined` = TODAS as contas OVH.
+   * `provider_account_id` a filtrar, sempre por `= ANY(...)`.
    *
-   * "Todas" nao vira lista explicita de contas ativas de proposito.
-   * `ovh_monthly_costs` so contem linha OVH -- e a tabela do collector OVH, e
-   * nenhuma consulta deste modulo toca tabela AWS --, entao a ausencia de
-   * filtro nao pode trazer dado de outro provedor.
-   *
-   * Resolver "todas" para a lista de contas ATIVAS teria um efeito pior:
-   * o custo de uma conta desativada, que existe em `ovh_monthly_costs`, sumiria
-   * do total sem aviso. O numero cairia e nada na tela explicaria por que.
+   * A resolucao de "todas" NAO acontece aqui: quem monta o filtro ja decidiu.
+   * Ver `resolverRecorteContasOvh` -- "todas" vira a lista de contas OVH ativas
+   * do cadastro, e `undefined` sobra apenas para o caso em que nao ha nenhuma
+   * conta ativa cadastrada, onde filtrar por lista vazia zeraria o painel.
    */
   contas?: string[];
   /** `ovh_projects.service_name`. `undefined` = todos os projetos. */
@@ -199,6 +195,37 @@ export async function getDisponibilidadeOvh(
       linhas: Number(m.linhas),
     })),
   };
+}
+
+/**
+ * Linhas do periodo que ficaram FORA do recorte "todas as contas ativas".
+ *
+ * Existe por causa da resolucao de "todas" em lista explicita: custo de conta
+ * OVH que nao esta ativa em `cloud_accounts` deixa de entrar nos numeros, e essa
+ * queda precisa ser DITA. Sem esta contagem, o total cairia e nada na tela
+ * explicaria por que -- que e a forma mais cara de errar num painel de custo.
+ *
+ * A janela e a origem sao as mesmas do recorte; o que muda e a negacao do
+ * conjunto de contas. `<> ALL` e nao `NOT IN`: com um elemento NULL no array,
+ * `NOT IN` devolveria zero linhas em silencio.
+ */
+export async function contarLinhasForaDoCadastroOvh(
+  f: Omit<FiltroOvhSemMoeda, "contas">,
+  idsAtivos: string[],
+): Promise<number> {
+  if (idsAtivos.length === 0) return 0;
+
+  const p = new ConstrutorParams();
+  const condicoes = condicoesBase({ ...f, contas: undefined }, p);
+  condicoes.push(`c.provider_account_id <> ALL(${p.add(idsAtivos)}::text[])`);
+
+  const linha = await queryOne<{ linhas: string }>(
+    `SELECT count(*) AS linhas
+       FROM ovh_monthly_costs c
+      WHERE ${condicoes.join(" AND ")}`,
+    p.lista,
+  );
+  return Number(linha?.linhas ?? 0);
 }
 
 // -------------------------------------------------------------------- resumo
@@ -692,9 +719,14 @@ export async function getFaturasOvh(
  * NAO ha contas AWS nesta lista: `provider = 'ovh'` esta na consulta, e nao numa
  * verificacao posterior que alguem possa esquecer de repetir.
  */
-export async function getContasOvhDoCadastro(): Promise<
-  { id: string; nome: string }[]
-> {
+export type ContaOvhDoCadastro = {
+  id: string;
+  nome: string;
+  /** Unidade de negocio. Segunda linha do seletor, junto do id. `null` = sem. */
+  unidade: string | null;
+};
+
+export async function getContasOvhDoCadastro(): Promise<ContaOvhDoCadastro[]> {
   // `app_account_settings` e da migracao 002. Sem ela, um LEFT JOIN lancaria e
   // derrubaria a tela inteira -- degradar para `account_name` mostra um rotulo
   // ANTERIOR, nunca um nome errado. Mesma disciplina de `alias-conta.ts`.
@@ -703,19 +735,33 @@ export async function getContasOvhDoCadastro(): Promise<
   const nome = comAlias
     ? `coalesce(nullif(btrim(s.alias), ''), nullif(btrim(a.account_name), ''), a.account_id)`
     : `coalesce(nullif(btrim(a.account_name), ''), a.account_id)`;
+  // A unidade da tela de Contas Cloud (`app_account_settings`) tem precedencia
+  // sobre a de `cloud_accounts` pelo mesmo motivo do alias: e a que a pessoa
+  // editou no portal, e mostrar a outra faria o filtro contradizer o cadastro.
+  const unidade = comAlias
+    ? `coalesce(nullif(btrim(s.business_unit), ''), nullif(btrim(a.business_unit), ''))`
+    : `nullif(btrim(a.business_unit), '')`;
   const juncao = comAlias
     ? "LEFT JOIN app_account_settings s ON s.account_id = a.account_id"
     : "";
 
-  const linhas = await query<{ account_id: string; nome: string }>(
-    `SELECT a.account_id, ${nome} AS nome
+  const linhas = await query<{
+    account_id: string;
+    nome: string;
+    unidade: string | null;
+  }>(
+    `SELECT a.account_id, ${nome} AS nome, ${unidade} AS unidade
        FROM cloud_accounts a
        ${juncao}
       WHERE a.provider = 'ovh'
         AND a.active
       ORDER BY nome ASC, a.account_id ASC`,
   );
-  return linhas.map((l) => ({ id: l.account_id, nome: l.nome }));
+  return linhas.map((l) => ({
+    id: l.account_id,
+    nome: l.nome,
+    unidade: l.unidade,
+  }));
 }
 
 

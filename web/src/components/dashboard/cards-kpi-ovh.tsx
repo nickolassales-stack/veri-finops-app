@@ -348,11 +348,29 @@ export function CardsKpiOvh({
           procedencia errada -- os numeros acima sao das contas SELECIONADAS.
         */}
         {resumoCollector !== null && (
-          <p className="mt-3 border-t border-veri-offwhite pt-3 text-xs text-texto-suave">
-            {resumoCollector.total === 0
-              ? "Nenhuma conta OVH ativa no cadastro."
-              : resumoCollector.descricaoContas}
-          </p>
+          <div className="mt-3 space-y-1 border-t border-veri-offwhite pt-3 text-xs text-texto-suave">
+            <p>
+              {resumoCollector.total === 0
+                ? "Nenhuma conta OVH ativa no cadastro."
+                : resumoCollector.descricaoContas}
+            </p>
+            {/*
+              A coleta mais recente DO RECORTE, e nao a ultima execucao do
+              collector -- aquela fica no card ao lado e e global. Com um filtro
+              de conta aplicado as duas divergem, e e esta que responde "o numero
+              que estou vendo e de quando?".
+            */}
+            {resumoCollector.total > 0 && (
+              <p>
+                Última coleta mais recente:{" "}
+                <span className="veri-numero">
+                  {resumoCollector.ultimaColeta
+                    ? formatDataHora(resumoCollector.ultimaColeta, tz)
+                    : "nenhuma concluída"}
+                </span>
+              </p>
+            )}
+          </div>
         )}
       </Cartao>
     </div>

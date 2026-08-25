@@ -170,7 +170,7 @@ describe("validarIntervaloOvh", () => {
 describe("descreverFiltrosOvh", () => {
   it("nomeia periodo, origem e projeto", () => {
     expect(descreverFiltrosOvh(FILTROS_OVH_PADRAO)).toBe(
-      "Últimos 12 meses · Faturado · todas as contas · todos os projetos",
+      "Últimos 12 meses · Faturado · todas as contas OVH · todos os projetos",
     );
   });
 

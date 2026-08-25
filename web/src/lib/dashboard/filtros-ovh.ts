@@ -9,6 +9,7 @@ import {
   type PresetMes,
 } from "@/lib/filtros/periodo-mensal";
 import { ROTULO_FONTE } from "./ovh";
+import type { ContaOvhDisponivel } from "./tipos-ovh";
 
 /**
  * Estado dos filtros da visao OVH. Modulo PURO -- sem React, sem fetch.
@@ -225,9 +226,11 @@ export function validarIntervaloOvh(filtros: FiltrosOvh): ProblemaFiltroOvh {
  */
 export function descreverContasOvh(
   contas: string[],
-  disponiveis?: { id: string; nome: string }[],
+  disponiveis?: ContaOvhDisponivel[],
 ): string {
-  if (contas.length === 0) return "todas as contas";
+  // "todas as contas OVH" e nao "todas as contas": o resumo aparece numa tela
+  // que tem duas visoes, e a frase precisa dizer de qual provedor ela fala.
+  if (contas.length === 0) return "todas as contas OVH";
   if (contas.length === 1) {
     const achada = disponiveis?.find((c) => c.id === contas[0]);
     return achada?.nome ?? contas[0];
@@ -256,7 +259,7 @@ export function descreverPeriodoOvh(periodo: {
 export function descreverFiltrosOvh(
   filtros: FiltrosOvh,
   nomeDoProjeto?: string | null,
-  contasDisponiveis?: { id: string; nome: string }[],
+  contasDisponiveis?: ContaOvhDisponivel[],
 ): string {
   const periodo = ROTULOS_MES[filtros.periodo];
   const origem = ROTULO_FONTE[filtros.source];

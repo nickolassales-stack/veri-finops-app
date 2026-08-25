@@ -11,9 +11,11 @@ import {
   type ProblemaFiltroOvh,
 } from "@/lib/dashboard/filtros-ovh";
 import { DESCRICAO_FONTE, ROTULO_FONTE } from "@/lib/dashboard/ovh";
-import type { ProjetoDisponivel } from "@/lib/dashboard/tipos-ovh";
+import type { ContaOvhDisponivel, ProjetoDisponivel } from "@/lib/dashboard/tipos-ovh";
 import type { FonteOvh } from "@/lib/filtros/esquemas";
 import type { PresetMes } from "@/lib/filtros/periodo-mensal";
+
+import { CloudAccountMultiSelect } from "./cloud-account-multi-select";
 
 /**
  * Barra de filtros da visao OVH.
@@ -40,12 +42,13 @@ export function FiltrosOvhBarra({
   filtros: FiltrosOvh;
   problema: ProblemaFiltroOvh;
   /**
-   * Contas OVH ATIVAS do cadastro do portal (`cloud_accounts` + alias). Vazio
-   * ou com UMA conta esconde o seletor: um filtro de um item so ocupa espaco e
-   * sugere uma escolha que nao existe. Nenhuma conta AWS chega aqui -- a
-   * consulta ja filtra `provider = 'ovh'`.
+   * Contas OVH ATIVAS do cadastro do portal (`cloud_accounts` + alias).
+   *
+   * Nenhuma conta AWS chega aqui: a consulta que a monta ja filtra
+   * `provider = 'ovh' AND active`. Nenhum id e fixo no codigo -- cadastrar uma
+   * conta nova na tela de Contas Cloud a faz aparecer aqui sozinha.
    */
-  contas?: { id: string; nome: string }[];
+  contas?: ContaOvhDisponivel[];
   projetos: ProjetoDisponivel[];
   /** Origens que existem no banco. As outras aparecem marcadas como sem dado. */
   fontesComDado: FonteOvh[];
@@ -67,14 +70,27 @@ export function FiltrosOvhBarra({
             aoMudar={(source) => aoMudar({ source })}
           />
           {/* Contas ANTES de Projeto: um projeto pertence a uma conta, e a
-              pergunta natural vai do maior para o menor recorte. */}
-          {(contas?.length ?? 0) > 1 && (
-            <FiltroContas
-              selecionadas={filtros.contas}
-              contas={contas ?? []}
-              aoMudar={(lista) => aoMudar({ contas: lista })}
-            />
-          )}
+              pergunta natural vai do maior para o menor recorte.
+
+              SEMPRE VISIVEL, inclusive com uma conta so -- e o mesmo que a visao
+              AWS faz. Esconder o filtro no cadastro de uma conta economizava
+              espaco e cobrava caro: quem so tem uma conta nao descobre que o
+              recorte existe, e o filtro APARECE do nada no dia em que a segunda
+              e cadastrada, numa tela que a pessoa achava que conhecia. */}
+          <CloudAccountMultiSelect
+            provider="ovh"
+            contas={(contas ?? []).map((c) => ({
+              id: c.id,
+              nome: c.nome,
+              // A unidade e a segunda linha, junto do id -- "ovh-main-ca · ti".
+              detalhe: c.unidade,
+            }))}
+            selecionadas={filtros.contas}
+            aoMudar={(lista) => aoMudar({ contas: lista })}
+            rotulo="Contas OVH"
+            rotuloTodas="Todas as contas OVH"
+            vazio="Nenhuma conta OVH ativa cadastrada."
+          />
           <FiltroProjeto
             selecionado={filtros.projeto}
             projetos={projetos}
@@ -276,99 +292,6 @@ function FiltroOrigem({
       <p className="mt-1.5 max-w-xs text-xs text-texto-suave">
         {DESCRICAO_FONTE[selecionada]}. As três origens{" "}
         <strong className="font-medium">não se somam</strong>.
-      </p>
-    </fieldset>
-  );
-}
-
-/**
- * Contas OVH -- MULTIPLA ESCOLHA.
- *
- * ---------------------------------------------------------------------------
- * CAIXAS DE MARCACAO, E NAO `<select multiple>`
- *
- * O `<select multiple>` nativo e uma armadilha conhecida: para escolher a
- * segunda opcao e preciso segurar Ctrl, e quem nao sabe disso DESMARCA a
- * primeira ao clicar na segunda -- silenciosamente, achando que somou. Num
- * filtro que muda todos os numeros da tela, esse gesto errado nao tem sintoma.
- *
- * Caixas de marcacao nao tem esse modo escondido, e cada uma e um alvo de toque
- * legitimo no celular.
- *
- * ---------------------------------------------------------------------------
- * "TODAS" E A AUSENCIA DE SELECAO, E NAO UMA CAIXA A MAIS
- *
- * Uma caixa "Todas" que marca as demais parece util e cria um terceiro estado
- * ambiguo -- "todas marcadas" e "todas" viram coisas diferentes na URL, e
- * cadastrar a terceira conta faria um recorte "todas" antigo passar a excluir
- * a conta nova sem que ninguem tenha mudado o filtro.
- *
- * Aqui, nenhuma marcada = todas. O botao "Todas as contas" apenas LIMPA.
- *
- * Aparece so com DUAS ou mais contas: um filtro de um item so ocupa espaco e
- * sugere uma escolha que nao existe.
- */
-function FiltroContas({
-  selecionadas,
-  contas,
-  aoMudar,
-}: {
-  selecionadas: string[];
-  contas: { id: string; nome: string }[];
-  aoMudar: (contas: string[]) => void;
-}) {
-  const idBase = useId();
-  const todas = selecionadas.length === 0;
-
-  function alternar(id: string) {
-    aoMudar(
-      selecionadas.includes(id)
-        ? selecionadas.filter((x) => x !== id)
-        : [...selecionadas, id],
-    );
-  }
-
-  return (
-    <fieldset className="min-w-0">
-      <legend className="text-xs font-medium uppercase tracking-wide text-texto-suave">
-        Contas
-      </legend>
-
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => aoMudar([])}
-          aria-pressed={todas}
-          className={pilula(todas)}
-        >
-          Todas as contas
-        </button>
-
-        {contas.map((c) => {
-          const id = `${idBase}-${c.id}`;
-          const marcada = selecionadas.includes(c.id);
-
-          return (
-            <div key={c.id} className="relative">
-              <input
-                type="checkbox"
-                id={id}
-                checked={marcada}
-                onChange={() => alternar(c.id)}
-                className="peer sr-only"
-              />
-              <label htmlFor={id} className={pilula(marcada)} title={c.id}>
-                {c.nome}
-              </label>
-            </div>
-          );
-        })}
-      </div>
-
-      <p className="mt-1.5 max-w-xs text-xs text-texto-suave">
-        {todas
-          ? "Todas as contas OVH ativas do cadastro."
-          : `${selecionadas.length} de ${contas.length} contas no recorte.`}
       </p>
     </fieldset>
   );
